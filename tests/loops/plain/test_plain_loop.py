@@ -390,7 +390,7 @@ def test_judge_invoke_receives_tracker_kwargs(
         specs = kwargs.get("mcp_servers")
         assert specs is not None and len(specs) == 1
         spec = specs[0]
-        assert spec.name == "vibeserve-issues"
+        assert spec.name == "vibe-database-issues"
         assert spec.command == "python"
         parsed = _spec_args_to_dict(spec.args)
         assert parsed["creator"] == "judge"

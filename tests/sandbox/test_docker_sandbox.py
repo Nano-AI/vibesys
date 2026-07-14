@@ -62,10 +62,10 @@ class TestStart:
         assert "nvcr.io/nvidia/pytorch:25.04-py3" in cmd
         assert "sleep" in cmd
         assert "infinity" in cmd
-        # Container should be named with vibeserve prefix
+        # Container should be named with vibe-database prefix
         assert "--name" in cmd
         name_idx = cmd.index("--name")
-        assert cmd[name_idx + 1].startswith("vibeserve-")
+        assert cmd[name_idx + 1].startswith("vibe-database-")
         assert docker_run_call.kwargs["timeout"] == 120
 
     @patch("subprocess.run")
@@ -336,8 +336,8 @@ class TestIdProperty:
         )
         sandbox.start()
 
-        assert sandbox.id.startswith("vibeserve-")
-        assert len(sandbox.id) > len("vibeserve-")
+        assert sandbox.id.startswith("vibe-database-")
+        assert len(sandbox.id) > len("vibe-database-")
 
 
 class TestUploadFiles:

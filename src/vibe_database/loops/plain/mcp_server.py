@@ -2,13 +2,13 @@
 
 Usage::
 
-    vibeserve-issue-mcp /path/to/issues.json [options]
+    vibe-database-issue-mcp /path/to/issues.json [options]
     python -m vibe_database.loops.plain.mcp_server /path/to/issues.json [options]
 
 Mounts four tools (``list_issues``, ``get_issue``, ``search_issues``,
 ``create_issue``) against the given ``issues.json`` file. Any MCP client can
 mount this server: Claude Desktop, Cursor, custom MCP clients, or the
-vibeserve issue-loop's own ``.mcp.json`` sandwich (added in a separate PR).
+vibe-database issue-loop's own ``.mcp.json`` sandwich (added in a separate PR).
 
 The four tools delegate into :mod:`vibe_database.loops.plain.tool_impl` so that
 the deepagents (LangChain ``@tool``) path and the MCP path enforce identical
@@ -52,7 +52,7 @@ def _parse_allowed_types(value: str) -> frozenset[IssueType]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="vibeserve-issue-mcp",
+        prog="vibe-database-issue-mcp",
         description=(
             "Stdio MCP server exposing an IssueBoard (issues.json) as four "
             "tools: list_issues, get_issue, search_issues, create_issue."
@@ -109,7 +109,7 @@ def build_server(args: argparse.Namespace) -> FastMCP:
         cap=args.cap,
         allowed_types=frozenset(args.allowed_types),
     )
-    mcp = FastMCP("vibeserve-issues")
+    mcp = FastMCP("vibe-database-issues")
 
     @mcp.tool()
     def list_issues(status: str | None = None) -> str:

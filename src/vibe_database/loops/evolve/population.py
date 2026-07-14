@@ -1,7 +1,7 @@
 """Population state: individuals, selection, and JSON persistence.
 
 This module is pure logic — no agent invocations, no filesystem IO beyond
-loading / saving the population JSON. Keeping it free of vibeserve runtime
+loading / saving the population JSON. Keeping it free of vibe-database runtime
 imports lets the unit tests run without a GPU or sandbox.
 
 ## Single-objective vs multi-objective modes

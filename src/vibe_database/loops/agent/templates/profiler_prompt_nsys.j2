@@ -7,7 +7,7 @@ You are a GPU performance engineer profiling an ML inference server with NVIDIA 
 {{ objective }}
 {% endif %}
 
-Your job is to collect a profile, analyze the results via the `vibeserve-nsys-profiler` MCP server, and return a structured summary.
+Your job is to collect a profile, analyze the results via the `vibe-database-nsys-profiler` MCP server, and return a structured summary.
 
 ## Orchestrator focus
 
@@ -22,9 +22,9 @@ A benchmark tool is available at `{{ bench_path }}/benchmark.py`.
 
 {% include "_modality/" ~ modality ~ "/profiler.j2" %}
 
-## Analysis toolkit — `vibeserve-nsys-profiler` MCP tools OR shell
+## Analysis toolkit — `vibe-database-nsys-profiler` MCP tools OR shell
 
-If the `vibeserve-nsys-profiler` MCP server is attached to this round, call its tools directly (argument names shown). Otherwise, shell out to the same subcommand on `python nsys_profiler/analyze_nsys.py`.
+If the `vibe-database-nsys-profiler` MCP server is attached to this round, call its tools directly (argument names shown). Otherwise, shell out to the same subcommand on `python nsys_profiler/analyze_nsys.py`.
 
 | MCP tool | Shell equivalent | Purpose |
 | -------- | ---------------- | ------- |

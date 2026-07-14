@@ -31,7 +31,7 @@ from vibe_database._agent_cli.opencode import OpencodeCodingAgent
 
 def _spec() -> MCPServerSpec:
     return MCPServerSpec(
-        name="vibeserve-issues",
+        name="vibe-database-issues",
         command="python",
         args=[
             "-m",
@@ -51,7 +51,7 @@ def _spec() -> MCPServerSpec:
 
 def _spec_with_env() -> MCPServerSpec:
     return MCPServerSpec(
-        name="vibeserve-issues",
+        name="vibe-database-issues",
         command="python",
         args=["-m", "vibe_database.loops.plain.mcp_server", "issues.json"],
         env={"MY_VAR": "my_value", "OTHER": "x"},
@@ -76,7 +76,7 @@ class TestClaudeMCP:
         target = tmp_path / ".mcp.json"
         assert target.exists()
         config = json.loads(target.read_text())
-        server = config["mcpServers"]["vibeserve-issues"]
+        server = config["mcpServers"]["vibe-database-issues"]
         assert server["command"] == "python"
         assert server["args"] == _spec().args
         assert "trust" not in server
@@ -87,7 +87,7 @@ class TestClaudeMCP:
         agent.install_mcp_servers(tmp_path, [_spec_with_env()])
 
         config = json.loads((tmp_path / ".mcp.json").read_text())
-        server = config["mcpServers"]["vibeserve-issues"]
+        server = config["mcpServers"]["vibe-database-issues"]
         assert server["env"] == {"MY_VAR": "my_value", "OTHER": "x"}
 
     def test_uninstall_removes_file(self, tmp_path: Path):
@@ -123,7 +123,7 @@ class TestGeminiMCP:
         assert target.exists()
         assert (tmp_path / ".gemini").is_dir()
         config = json.loads(target.read_text())
-        server = config["mcpServers"]["vibeserve-issues"]
+        server = config["mcpServers"]["vibe-database-issues"]
         assert server["command"] == "python"
         assert server["args"] == _spec().args
         # trust:true skips Gemini's per-tool approval prompts.
@@ -159,7 +159,7 @@ class TestGeminiMCP:
         agent = self._agent()
         agent.install_mcp_servers(tmp_path, [_spec_with_env()])
         config = json.loads((tmp_path / ".gemini" / "settings.json").read_text())
-        server = config["mcpServers"]["vibeserve-issues"]
+        server = config["mcpServers"]["vibe-database-issues"]
         assert server["env"] == {"MY_VAR": "my_value", "OTHER": "x"}
 
 
@@ -184,7 +184,7 @@ class TestOpencodeMCP:
         assert "mcpServers" not in config
         assert config["$schema"] == "https://opencode.ai/config.json"
 
-        server = config["mcp"]["vibeserve-issues"]
+        server = config["mcp"]["vibe-database-issues"]
         assert server["type"] == "local"
         assert server["enabled"] is True
         # opencode uses a single combined command array.
@@ -194,7 +194,7 @@ class TestOpencodeMCP:
         agent = self._agent()
         agent.install_mcp_servers(tmp_path, [_spec_with_env()])
         config = json.loads((tmp_path / "opencode.json").read_text())
-        server = config["mcp"]["vibeserve-issues"]
+        server = config["mcp"]["vibe-database-issues"]
         # opencode's key is 'environment', not 'env'.
         assert server["environment"] == {"MY_VAR": "my_value", "OTHER": "x"}
         assert "env" not in server
@@ -238,11 +238,11 @@ class TestCodexMCP:
         values = [v for f, v in zip(flags[0::2], flags[1::2]) if f == "--config"]
         assert all(f == "--config" for f in flags[0::2])
 
-        # name "vibeserve-issues" should snake-case to "vibeserve_issues".
+        # name "vibe-database-issues" should snake-case to "vibe_database_issues".
         joined = "\n".join(values)
-        assert 'mcp_servers.vibeserve_issues.command="python"' in joined
+        assert 'mcp_servers.vibe_database_issues.command="python"' in joined
         # The args= entry should be a TOML array of quoted strings.
-        args_entries = [v for v in values if v.startswith("mcp_servers.vibeserve_issues.args=")]
+        args_entries = [v for v in values if v.startswith("mcp_servers.vibe_database_issues.args=")]
         assert len(args_entries) == 1
         args_value = args_entries[0].split("=", 1)[1]
         assert args_value.startswith("[") and args_value.endswith("]")
@@ -257,8 +257,8 @@ class TestCodexMCP:
         agent = self._agent()
         agent.install_mcp_servers(tmp_path, [_spec_with_env()])
         joined = "\n".join(agent.extra_config_args)
-        assert 'mcp_servers.vibeserve_issues.env.MY_VAR="my_value"' in joined
-        assert 'mcp_servers.vibeserve_issues.env.OTHER="x"' in joined
+        assert 'mcp_servers.vibe_database_issues.env.MY_VAR="my_value"' in joined
+        assert 'mcp_servers.vibe_database_issues.env.OTHER="x"' in joined
 
     def test_install_quotes_strings_with_special_characters(self, tmp_path: Path):
         agent = self._agent()
@@ -299,7 +299,7 @@ class TestCodexMCP:
         agent.install_mcp_servers(Path("/tmp"), [_spec()])
         cmd = agent._get_command("hello")
         assert "--config" in cmd
-        assert any(s.startswith("mcp_servers.vibeserve_issues.command=") for s in cmd)
+        assert any(s.startswith("mcp_servers.vibe_database_issues.command=") for s in cmd)
 
 
 # ---------------------------------------------------------------------------

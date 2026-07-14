@@ -33,7 +33,7 @@ def mcp_spec(profiler_kind: str):
         return None
     if profiler_kind == "torch":
         return MCPServerSpec(
-            name="vibeserve-torch-profiler",
+            name="vibe-database-torch-profiler",
             command="python",
             args=["torch_profiler/server.py"],
         )

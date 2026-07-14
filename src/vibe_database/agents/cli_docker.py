@@ -12,16 +12,16 @@ from pathlib import Path
 # root unless ``IS_SANDBOX=1`` is set, so we set it here.  We run everything
 # as root inside the container (the default) to avoid uv/pip permission
 # errors when the agent installs packages.
-# Every provider also gets ``PYTHONPATH=/opt/vibeserve`` so the in-container
+# Every provider also gets ``PYTHONPATH=/opt/vibe-database`` so the in-container
 # CLI can spawn ``python -m vibe_database.loops.plain.mcp_server`` against the
 # bind-mounted project root (added in ``DockerSandbox.start`` for all four
 # CLI providers). Without this the MCP server module wouldn't be importable
 # inside the container.
 DOCKER_PROVIDER_ENV: dict[str, dict[str, str]] = {
-    "claude": {"IS_SANDBOX": "1", "PYTHONPATH": "/opt/vibeserve"},
-    "gemini": {"PYTHONPATH": "/opt/vibeserve"},
-    "codex": {"PYTHONPATH": "/opt/vibeserve"},
-    "opencode": {"PYTHONPATH": "/opt/vibeserve"},
+    "claude": {"IS_SANDBOX": "1", "PYTHONPATH": "/opt/vibe-database"},
+    "gemini": {"PYTHONPATH": "/opt/vibe-database"},
+    "codex": {"PYTHONPATH": "/opt/vibe-database"},
+    "opencode": {"PYTHONPATH": "/opt/vibe-database"},
 }
 
 

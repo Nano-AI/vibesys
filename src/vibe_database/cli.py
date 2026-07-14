@@ -231,8 +231,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--modal-app",
         type=str,
-        default="vibeserve",
-        help="Default Modal App name (suggested to the implementer). Default: vibeserve.",
+        default="vibe-database",
+        help="Default Modal App name (suggested to the implementer). Default: vibe-database.",
     )
     parser.add_argument(
         "--debug",

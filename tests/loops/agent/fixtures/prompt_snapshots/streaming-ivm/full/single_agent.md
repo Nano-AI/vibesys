@@ -72,7 +72,7 @@ The shared experiment workspace is your working directory. Reference implementat
 
 After (and only after) the implementation passes your self-judge gates, capture a profile so the orchestrator has a bottleneck signal for the next round.
 
-Use `torch.profiler` via `torch_profiler/analyze_torch_profile.py` (or the `vibeserve-torch-profiler` MCP tools when attached). Start with `tables`, then `kernels` / `operators` / `cpu_overhead` / `memory` / `summary` as relevant.
+Use `torch.profiler` via `torch_profiler/analyze_torch_profile.py` (or the `vibe-database-torch-profiler` MCP tools when attached). Start with `tables`, then `kernels` / `operators` / `cpu_overhead` / `memory` / `summary` as relevant.
 
 Capture in-process: `python torch_profiler/analyze_torch_profile.py capture --model-dir /workspace --weights-dir /model --output /tmp/prof.json --warmup 3 --num-iters 20 --max-tokens 32 --prompt "The capital of France is"`.
 

@@ -194,7 +194,7 @@ class TestProcessStdout:
                     "type": "item.completed",
                     "item": {
                         "type": "mcp_tool_call",
-                        "server": "vibeserve_issues",
+                        "server": "vibe_database_issues",
                         "tool": "list_issues",
                         "arguments": {"cap": 1},
                         "result": "[]",
@@ -205,7 +205,7 @@ class TestProcessStdout:
         handler.on_tool_call.assert_called_once_with(
             "mcp_tool_call",
             {
-                "server": "vibeserve_issues",
+                "server": "vibe_database_issues",
                 "tool": "list_issues",
                 "arguments": {"cap": 1},
                 "result": "[]",

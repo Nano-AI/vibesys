@@ -144,10 +144,10 @@ class _RunContext:
         self._run_environment_stack = ExitStack()
 
         # Dirs excluded from workspace copy, git tracking, and the
-        # Modal-side tar download. ``_auth`` and ``_opt_vibeserve`` are
+        # Modal-side tar download. ``_auth`` and ``_opt_vibe_database`` are
         # our own "bind-mount redirect" dirs under --modal (host auth +
         # vibe_database pkg uploaded into /workspace/_auth and
-        # /workspace/_opt_vibeserve respectively) — not implementer
+        # /workspace/_opt_vibe_database respectively) — not implementer
         # output, and we never want them in git history. ``_mounts`` is
         # the Docker ancestor-mount redirect dir for the same reason.
         # ``.cache`` holds any HF-download fallback (drafter, etc.).
@@ -157,7 +157,7 @@ class _RunContext:
             ".git",
             "repos",
             "_auth",
-            "_opt_vibeserve",
+            "_opt_vibe_database",
             "_mounts",
             ".cache",
         }
@@ -598,10 +598,10 @@ class _RunContext:
     # -- git tracking helpers -------------------------------------------------
 
     _GIT_ENV_STATIC = {
-        "GIT_AUTHOR_NAME": "vibeserve",
-        "GIT_AUTHOR_EMAIL": "vibeserve@local",
-        "GIT_COMMITTER_NAME": "vibeserve",
-        "GIT_COMMITTER_EMAIL": "vibeserve@local",
+        "GIT_AUTHOR_NAME": "vibe-database",
+        "GIT_AUTHOR_EMAIL": "vibe-database@local",
+        "GIT_COMMITTER_NAME": "vibe-database",
+        "GIT_COMMITTER_EMAIL": "vibe-database@local",
     }
 
     @property

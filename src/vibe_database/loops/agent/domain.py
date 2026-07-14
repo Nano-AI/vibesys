@@ -26,7 +26,7 @@ copy.
 
 ``--domain`` accepts a **built-in name** (a ``<name>.md`` under
 ``loops/agent/templates/_domain/``) or a **path** to a user's own ``.md`` file
-anywhere on disk, so users can author their own without touching vibeserve. See
+anywhere on disk, so users can author their own without touching vibe-database. See
 ``loops/agent/templates/_domain/README.md`` for the authoring guide.
 """
 

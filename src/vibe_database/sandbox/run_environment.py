@@ -287,7 +287,7 @@ class ModalEnvironmentConfig:
     image: str | None = None
     gpu: str = "H100"
     model_volume: str | None = None
-    app: str = "vibeserve"
+    app: str = "vibe-database"
 
 
 class ModalEnvironment(_NoopWorkspaceRecovery):
@@ -309,7 +309,7 @@ class ModalEnvironment(_NoopWorkspaceRecovery):
                 model_volume=(
                     str(options["model_volume"]) if options.get("model_volume") else None
                 ),
-                app=str(options.get("app") or "vibeserve"),
+                app=str(options.get("app") or "vibe-database"),
             )
         )
 
@@ -400,7 +400,7 @@ def make_run_environment_spec(
     use_modal: bool = False,
     modal_gpu: str = "H100",
     modal_model_volume: str | None = None,
-    modal_app: str = "vibeserve",
+    modal_app: str = "vibe-database",
 ) -> RunEnvironmentSpec:
     """Build a spec from the current CLI compatibility flags.
 
@@ -433,13 +433,13 @@ def _modal_app_name(workspace: Path, fallback: str) -> str:
     clobber or shadow the first.  ``exp_dir.name`` is already unique per
     run (timestamp + exp_name) and is the natural source.  We sanitize it
     to Modal's allowed alphabet (lowercase alphanumerics + hyphens, ≤63
-    chars) and prefix with ``vibeserve-`` so all app names are findable.
+    chars) and prefix with ``vibe-database-`` so all app names are findable.
     """
-    candidate = workspace.parent.name or fallback or "vibeserve"
+    candidate = workspace.parent.name or fallback or "vibe-database"
     sanitized = "".join(c if c.isalnum() or c == "-" else "-" for c in candidate.lower())
     sanitized = "-".join(part for part in sanitized.split("-") if part)
-    name = f"vibeserve-{sanitized}" if sanitized else "vibeserve"
-    return name[:63].rstrip("-") or "vibeserve"
+    name = f"vibe-database-{sanitized}" if sanitized else "vibe-database"
+    return name[:63].rstrip("-") or "vibe-database"
 
 
 def _modal_runtime_notes(gpu: str, app_name: str) -> str:
@@ -449,7 +449,7 @@ def _modal_runtime_notes(gpu: str, app_name: str) -> str:
     mount points — those are workload-specific and the implementer reads
     them from the input metadata files (``reference/meta.json`` etc.) at
     setup time.  Pre-staged Modal Volumes follow the framework's
-    ``vibeserve-model-<normalized-model-id>`` convention; the implementer
+    ``vibe-database-model-<normalized-model-id>`` convention; the implementer
     can derive the volume name from the ``model_id`` in those metadata
     files (or just call ``modal.Volume.from_name(name)`` once it knows it).
     """
@@ -473,7 +473,7 @@ def _modal_runtime_notes(gpu: str, app_name: str) -> str:
         f'(e.g. `modal.Volume.from_name("{app_name}-traces", '
         "create_if_missing=True)`).\n"
         "    Model-weight Volumes that the framework pre-stages "
-        "(named `vibeserve-model-<...>`, see below) are intentionally "
+        "(named `vibe-database-model-<...>`, see below) are intentionally "
         "*shared* across runs — never rename those, never recreate them "
         "under the per-run prefix.\n"
         "  - All GPU-bound work (model loading, attention forwards, "
@@ -496,10 +496,10 @@ def _modal_runtime_notes(gpu: str, app_name: str) -> str:
         "name with this exact rule (matches "
         "`vibe_database/modal_model_setup.py::_volume_name_for`):\n"
         '      `re.sub(r"[^a-z0-9]+", "-", model_id.lower()).strip("-")`\n'
-        "    prefixed with `vibeserve-model-`. Every run of non-"
+        "    prefixed with `vibe-database-model-`. Every run of non-"
         "alphanumeric characters (slashes, dots, underscores, etc.) "
         "collapses to a single `-`. So `org/Foo-1.2-X` becomes "
-        "`vibeserve-model-org-foo-1-2-x` (the dot in `1.2` becomes a "
+        "`vibe-database-model-org-foo-1-2-x` (the dot in `1.2` becomes a "
         "dash, not preserved). When in doubt run `modal volume list` "
         "to see the actual names the framework provisioned. "
         "Use `modal.Volume.from_name(<that-name>)` and mount it at "
@@ -626,7 +626,7 @@ def _container_mount_plan(
     """Build the bind mounts + setup symlinks for a sandbox.
 
     ``include_cli_provider_mounts`` controls whether CLI auth dirs and the
-    full project tree are added under ``/root`` and ``/opt/vibeserve``.
+    full project tree are added under ``/root`` and ``/opt/vibe-database``.
     Defaults to True; both supported environments (local Docker and the
     Modal-via-Docker mode) bind-mount these directly.
     """
@@ -703,7 +703,7 @@ def _container_mount_plan(
         from vibe_database.agents.cli_docker import auth_bind_mounts
 
         bind_mounts.extend(auth_bind_mounts(request.cli_provider))
-        bind_mounts.append((str(request.project_root), "/opt/vibeserve", True))
+        bind_mounts.append((str(request.project_root), "/opt/vibe-database", True))
 
     return bind_mounts, symlinks, model_path
 

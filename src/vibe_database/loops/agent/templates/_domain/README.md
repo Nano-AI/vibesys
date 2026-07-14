@@ -1,4 +1,4 @@
-# Domains — pointing vibeserve at your problem space
+# Domains — pointing vibe-database at your problem space
 
 A **domain** bundles the cross-cutting context the agents need for whatever
 you're building: the background knowledge the implementer must read, the

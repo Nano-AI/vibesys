@@ -188,7 +188,7 @@ class ModalSandbox(BaseSandbox):
         log_path: str | Path | None = None,
         extra_init_commands: list[str] | None = None,
         setup_fns: list["Callable[[ModalSandbox], None]"] | None = None,
-        app_name: str = "vibeserve",
+        app_name: str = "vibe-database",
         enable_fallback_restart: bool = True,
         max_restart_attempts: int = 2,
     ) -> None:
@@ -315,7 +315,7 @@ class ModalSandbox(BaseSandbox):
         """Create the Modal sandbox, upload workspace, start the container."""
         # Ephemeral per-run workspace volume.  Created once; reused on
         # restart so in-progress agent state survives a sandbox crash.
-        self._workspace_volume_name = f"vibeserve-ws-{uuid.uuid4().hex[:12]}"
+        self._workspace_volume_name = f"vibe-database-ws-{uuid.uuid4().hex[:12]}"
         self._workspace_volume = modal.Volume.from_name(
             self._workspace_volume_name,
             create_if_missing=True,
@@ -532,7 +532,7 @@ class ModalSandbox(BaseSandbox):
         tempdirs: list[tempfile.TemporaryDirectory[str]],
     ) -> None:
         """Upload a stable snapshot of a bind-mounted directory."""
-        tmp = tempfile.TemporaryDirectory(prefix="vibeserve-modal-upload-")
+        tmp = tempfile.TemporaryDirectory(prefix="vibe-database-modal-upload-")
         tempdirs.append(tmp)
         snapshot = Path(tmp.name) / local_root.name
         self._copy_bind_mount_snapshot(local_root, snapshot)
@@ -740,10 +740,10 @@ class ModalSandbox(BaseSandbox):
                 results.append(FileDownloadResponse(path=path, error="file_not_found"))
         return results
 
-    # -- compat shims for vibeserve-shell metadata (DockerSandbox has these) --
+    # -- compat shims for vibe-database-shell metadata (DockerSandbox has these) --
 
     def save_symlink_commands(self, symlink_commands: list[str]) -> None:
-        """No-op: vibeserve-shell reattachment isn't supported for Modal yet."""
+        """No-op: vibe-database-shell reattachment isn't supported for Modal yet."""
         return
 
     # -- shutdown ----------------------------------------------------------
@@ -793,7 +793,7 @@ class ModalSandbox(BaseSandbox):
         ".pytest_cache",
         "_mounts",
         "_auth",  # host CLI auth uploaded from ~/.codex etc.
-        "_opt_vibeserve",  # vibe_database pkg uploaded for MCP
+        "_opt_vibe_database",  # vibe_database pkg uploaded for MCP
         "acc_checker",
         "bench",
         "skills",
@@ -819,7 +819,7 @@ class ModalSandbox(BaseSandbox):
         import tempfile
 
         exclude_args = " ".join(f"--exclude='{e}'" for e in self._DOWNLOAD_EXCLUDES)
-        tar_remote = "/tmp/_vibeserve_ws.tar.gz"
+        tar_remote = "/tmp/_vibe_database_ws.tar.gz"
         tar_cmd = (
             f"cd {self._CONTAINER_ROOT} && "
             f"tar {exclude_args} -czf {tar_remote} . 2>/dev/null && "

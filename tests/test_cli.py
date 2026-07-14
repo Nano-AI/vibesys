@@ -1,4 +1,4 @@
-"""Tests for the unified ``vibeserve`` CLI dispatcher."""
+"""Tests for the unified ``vibe-database`` CLI dispatcher."""
 
 from __future__ import annotations
 

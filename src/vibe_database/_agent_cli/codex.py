@@ -127,8 +127,8 @@ class CodexCodingAgent(CLICodingAgent):
         values are parsed as TOML literals, so strings need TOML quoting
         and arrays use TOML inline array syntax.
 
-        TOML table keys are snake_case by convention, so ``"vibeserve-issues"``
-        becomes ``mcp_servers.vibeserve_issues``.
+        TOML table keys are snake_case by convention, so ``"vibe-database-issues"``
+        becomes ``mcp_servers.vibe_database_issues``.
         """
         flags: list[str] = []
         for s in servers:

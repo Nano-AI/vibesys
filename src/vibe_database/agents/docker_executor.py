@@ -1,4 +1,4 @@
-"""agentshim command executor for existing vibeserve Docker sandboxes."""
+"""agentshim command executor for existing vibe-database Docker sandboxes."""
 
 from __future__ import annotations
 

@@ -97,7 +97,7 @@ class TestStart:
         sb = ModalSandbox(
             host_workspace=str(tmp_path),
             image="nvcr.io/nvidia/pytorch:25.04-py3",
-            model_volume_name="vibeserve-models",
+            model_volume_name="vibe-database-models",
         )
         sb.start()
         import modal
@@ -578,7 +578,7 @@ class TestSandboxFallbackRestart:
         sb = ModalSandbox(
             host_workspace=str(tmp_path),
             image="nvcr.io/nvidia/pytorch:25.04-py3",
-            extra_readonly_volumes={"/draft_model": "vibeserve-model-eagle3"},
+            extra_readonly_volumes={"/draft_model": "vibe-database-model-eagle3"},
         )
         sb.start()
         kwargs = modal.Sandbox.create.call_args.kwargs

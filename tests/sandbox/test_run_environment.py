@@ -146,13 +146,13 @@ def test_modal_environment_prompt_notes_describe_modal_dispatch(tmp_path):
     assert "GPU" in notes
     # Tell the agent where to look up volume names rather than baking them in.
     assert "meta.json" in notes
-    # No hardcoded model IDs or vibeserve-internal volume names should leak
+    # No hardcoded model IDs or vibe-database-internal volume names should leak
     # into the runtime-notes block.
     forbidden = (
         "yuhuili",
         "Llama-3",
-        "vibeserve-model-meta-llama",
-        "vibeserve-model-yuhuili",
+        "vibe-database-model-meta-llama",
+        "vibe-database-model-yuhuili",
     )
     for token in forbidden:
         assert token not in notes, f"prompt_notes leaks task-specific token {token!r}"
@@ -195,11 +195,11 @@ def test_modal_environment_per_run_namespace_prefix_unique(tmp_path):
     notes_a = env.open(req_a).view.prompt_notes
     notes_b = env.open(req_b).view.prompt_notes
 
-    # Each run's prefix is `vibeserve-<exp-dir-name-sanitized>`.
-    assert "vibeserve-20260429-100000-runa" in notes_a
-    assert "vibeserve-20260429-100100-runb" in notes_b
-    assert "vibeserve-20260429-100000-runa" not in notes_b
-    assert "vibeserve-20260429-100100-runb" not in notes_a
+    # Each run's prefix is `vibe-database-<exp-dir-name-sanitized>`.
+    assert "vibe-database-20260429-100000-runa" in notes_a
+    assert "vibe-database-20260429-100100-runb" in notes_b
+    assert "vibe-database-20260429-100000-runa" not in notes_b
+    assert "vibe-database-20260429-100100-runb" not in notes_a
 
 
 def test_modal_environment_runtime_notes_describe_profile_contract(tmp_path):

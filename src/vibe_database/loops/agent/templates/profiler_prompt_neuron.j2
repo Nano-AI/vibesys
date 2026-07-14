@@ -7,7 +7,7 @@ You are a NeuronCore (AWS Trainium) performance engineer profiling an ML inferen
 {{ objective }}
 {% endif %}
 
-Your job is to capture a profile, analyze the results via the `vibeserve-neuron-profiler` MCP server, and return a structured summary.
+Your job is to capture a profile, analyze the results via the `vibe-database-neuron-profiler` MCP server, and return a structured summary.
 
 ## Orchestrator focus
 
@@ -39,9 +39,9 @@ NeuronCores execute *compiled graphs* (NEFFs). You cannot profile work that neve
    ```
    `capture` wraps `neuron-explorer inspect`, which runs the workload and writes a system + device profile (NTFF) plus the NEFF into the out-dir. If it reports **no NTFF/NEFF produced**, the model is not executing on the NeuronCore — record that as the headline finding.
 
-## Analysis toolkit — `vibeserve-neuron-profiler` MCP tools OR shell
+## Analysis toolkit — `vibe-database-neuron-profiler` MCP tools OR shell
 
-If the `vibeserve-neuron-profiler` MCP server is attached to this round, call its tools directly. Otherwise shell out to the same subcommand on `python neuron_profiler/analyze_neuron.py`.
+If the `vibe-database-neuron-profiler` MCP server is attached to this round, call its tools directly. Otherwise shell out to the same subcommand on `python neuron_profiler/analyze_neuron.py`.
 
 | MCP tool | Shell equivalent | Purpose |
 | -------- | ---------------- | ------- |

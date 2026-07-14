@@ -1,4 +1,4 @@
-"""agentshim command executor for vibeserve Modal sandboxes.
+"""agentshim command executor for vibe-database Modal sandboxes.
 
 Companion to :mod:`vibe_database.agents.docker_executor`.  Drives a
 running ``modal.Sandbox`` (wrapped by :class:`ModalSandbox`) via the

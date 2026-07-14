@@ -111,7 +111,7 @@ class ModalOptions:
         model_volume_name: str | None = None,
         extra_readonly_volumes: dict[str, str] | None = None,
         extra_writable_volumes: dict[str, str] | None = None,
-        app_name: str = "vibeserve",
+        app_name: str = "vibe-database",
     ) -> None:
         self.gpu = gpu
         self.sandbox_timeout = sandbox_timeout

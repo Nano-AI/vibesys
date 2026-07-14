@@ -397,7 +397,7 @@ def run_plain_loop(
         # the MCP server (spawned by Claude Code with cwd=workspace) and the
         # loop's IssueBoard both read/write the same file. A convenience
         # symlink at log_dir/issues.json keeps the historical layout for
-        # vibeserve-shell users and tooling that walks logs/.
+        # vibe-database-shell users and tooling that walks logs/.
         store_path = ctx.workspace / "issues.json"
         log_link = ctx.log_dir / "issues.json"
         if not log_link.exists() and not log_link.is_symlink():

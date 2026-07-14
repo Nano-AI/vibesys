@@ -806,7 +806,7 @@ class TestCliAgentRunner:
         runner = CliAgentRunner(provider="claude", model="m", run_log_file=None)
         workspace = tmp_path / "ws"
         workspace.mkdir()
-        spec = MCPServerSpec(name="vibeserve-issues", command="python", args=["-m", "x"])
+        spec = MCPServerSpec(name="vibe-database-issues", command="python", args=["-m", "x"])
 
         runner.invoke(
             kind="judge",
@@ -851,7 +851,7 @@ class TestCliAgentRunner:
         runner = CliAgentRunner(provider="claude", model="m", run_log_file=None)
         workspace = tmp_path / "ws"
         workspace.mkdir()
-        spec = MCPServerSpec(name="vibeserve-issues", command="python", args=["-m", "x"])
+        spec = MCPServerSpec(name="vibe-database-issues", command="python", args=["-m", "x"])
 
         with pytest.raises(RuntimeError, match="boom"):
             runner.invoke(

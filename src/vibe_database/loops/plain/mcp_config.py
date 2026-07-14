@@ -31,7 +31,7 @@ def build_issue_mcp_spec(
     argparse-based CLI (positional ``store_path`` plus the policy flags).
     Both host and Docker modes use ``python -m vibe_database.loops.plain.mcp_server``
     so the same module-form invocation works inside the container with
-    ``PYTHONPATH=/opt/vibeserve``, without needing the package pip-installed.
+    ``PYTHONPATH=/opt/vibe-database``, without needing the package pip-installed.
     """
     args = [
         "-m",
@@ -47,7 +47,7 @@ def build_issue_mcp_spec(
     if cap is not None:
         args += ["--cap", str(cap)]
     return MCPServerSpec(
-        name="vibeserve-issues",
+        name="vibe-database-issues",
         command="python",
         args=args,
     )

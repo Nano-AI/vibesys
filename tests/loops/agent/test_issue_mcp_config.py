@@ -22,7 +22,7 @@ def test_build_judge_spec_has_correct_shape():
         allowed_types={IssueType.BUG},
     )
     assert isinstance(spec, MCPServerSpec)
-    assert spec.name == "vibeserve-issues"
+    assert spec.name == "vibe-database-issues"
     assert spec.command == "python"
     # Args are forwarded to the standalone server's argparse CLI.
     assert spec.args == [

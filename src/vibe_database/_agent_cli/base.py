@@ -15,7 +15,7 @@ class MCPServerSpec:
     """
 
     name: str
-    """Server identifier (e.g. ``"vibeserve-issues"``)."""
+    """Server identifier (e.g. ``"vibe-database-issues"``)."""
 
     command: str
     """Executable to launch (e.g. ``"python"``)."""

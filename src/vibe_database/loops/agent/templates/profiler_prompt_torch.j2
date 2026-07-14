@@ -8,7 +8,7 @@ You are a GPU performance engineer profiling an ML inference server with PyTorch
 {{ objective }}
 {% endif %}
 
-Your job is to collect a profile, analyze it via the `vibeserve-torch-profiler` MCP server, and return a structured summary.
+Your job is to collect a profile, analyze it via the `vibe-database-torch-profiler` MCP server, and return a structured summary.
 
 ## Orchestrator focus
 
@@ -33,9 +33,9 @@ A benchmark tool is available at `{{ bench_path }}/benchmark.py`.
 
 {% include "_modality/" ~ modality ~ "/profiler.j2" %}
 
-## Analysis toolkit — `vibeserve-torch-profiler` MCP tools OR shell
+## Analysis toolkit — `vibe-database-torch-profiler` MCP tools OR shell
 
-If the `vibeserve-torch-profiler` MCP server is attached to this round, call its tools directly. Otherwise, shell out to the same subcommand on `python torch_profiler/analyze_torch_profile.py`.
+If the `vibe-database-torch-profiler` MCP server is attached to this round, call its tools directly. Otherwise, shell out to the same subcommand on `python torch_profiler/analyze_torch_profile.py`.
 
 | MCP tool | Shell equivalent | Purpose |
 | -------- | ---------------- | ------- |

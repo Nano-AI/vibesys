@@ -298,7 +298,7 @@ class DockerSandbox(BaseSandbox):
 
     def start(self) -> None:
         """Start the Docker container."""
-        self._container_name = f"vibeserve-{uuid.uuid4().hex[:12]}"
+        self._container_name = f"vibe-database-{uuid.uuid4().hex[:12]}"
         cmd = [
             "docker",
             "run",
@@ -387,7 +387,7 @@ class DockerSandbox(BaseSandbox):
         self._container_id = result.stdout.strip()
         _live_containers[self._container_id] = self._container_name
 
-        # Save metadata for vibeserve-shell to reconstruct the environment
+        # Save metadata for vibe-database-shell to reconstruct the environment
         self._metadata = {
             "image": self._image,
             "gpus": self._gpus,
@@ -461,7 +461,7 @@ class DockerSandbox(BaseSandbox):
             pass  # Non-fatal: workspace dir may not exist in tests
 
     def save_symlink_commands(self, symlink_commands: list[str]) -> None:
-        """Update the metadata file with symlink commands for vibeserve-shell."""
+        """Update the metadata file with symlink commands for vibe-database-shell."""
         self._metadata["symlink_commands"] = symlink_commands
         self._save_metadata()
 
@@ -496,7 +496,7 @@ class DockerSandbox(BaseSandbox):
         """Return sandbox identifier."""
         if self._container_id:
             return self._container_name
-        return "vibeserve-not-started"
+        return "vibe-database-not-started"
 
     def execute(
         self,
