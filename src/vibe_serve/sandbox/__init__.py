@@ -5,5 +5,4 @@ Modules:
                               bridges CLI args to a sandbox factory.
   - ``docker_sandbox``     — ``DockerSandbox`` (BaseSandbox subclass).
   - ``modal_sandbox``      — ``ModalSandbox`` (BaseSandbox subclass).
-  - ``modal_model_setup``  — Modal Volume + weight staging for Modal runs.
 """

@@ -25,7 +25,6 @@ container or remote process lifetime at the command layer.
 
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import subprocess
@@ -35,7 +34,7 @@ from typing import Callable, Mapping, Protocol
 
 from deepagents.backends.sandbox import BaseSandbox
 
-from vibe_serve.backends import ModalOptions, SandboxKind
+from vibe_serve.backends import SandboxKind
 from vibe_serve.backends.base import ComputeBackendImpl, SetupFn
 from vibe_serve.constants import DEFAULT_AGENT_BACKEND, PROJECT_ROOT
 
@@ -324,19 +323,13 @@ class ModalEnvironment(_NoopWorkspaceRecovery):
         Python SDK and mount the host's ``~/.modal.toml`` into the container
         so those calls authenticate.
 
-        We retain the host-side Modal Volume bootstrap (model + optional
-        draft) so the implementer's ``modal.Volume.from_name(...)`` calls
-        resolve.  The previous "long-lived Modal sandbox running codex
-        inside" architecture is gone — it caused HOME-leak auth bugs,
-        codex-vs-model-weight memory contention, and per-run sandbox
-        cold-start overhead that this design eliminates.
+        The previous "long-lived Modal sandbox running codex inside"
+        architecture is gone — it caused HOME-leak auth bugs and per-run
+        sandbox cold-start overhead that this design eliminates. Model-weight
+        volume bootstrap (an LLM-serving concern) was removed in the
+        vibe-database fork; a ``model_volume`` supplied via config is still
+        honored for any pre-provisioned volume.
         """
-        # Host-side: ensure Modal Volumes exist for the model + optional
-        # draft.  These run before the Docker container starts and are
-        # idempotent (skip-if-ready sentinel).
-        self._ensure_model_volume(request)
-        self._ensure_draft_volume(request)
-
         bind_mounts, docker_symlinks, _model_path = _container_mount_plan(request)
         extra_init_commands, cli_provider_env = _cli_container_setup(request)
 
@@ -387,69 +380,6 @@ class ModalEnvironment(_NoopWorkspaceRecovery):
                 env_kind="modal",
             ),
             stop_on_close=True,
-        )
-
-    def _ensure_model_volume(self, request: RunEnvironmentRequest) -> None:
-        if self.model_volume or request.ref_dir is None:
-            return
-        meta_path = request.ref_dir / "meta.json"
-        if not meta_path.exists():
-            return
-        from vibe_serve.sandbox.modal_model_setup import ensure_model_volume
-
-        meta = json.loads(meta_path.read_text())
-        model_id = meta.get("model_id")
-        if not model_id:
-            raise ValueError(
-                f"meta.json at {meta_path} missing required 'model_id' field "
-                "(needed for Modal auto-upload)"
-            )
-        hf_available = bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
-        local_model = request.ref_dir / "model"
-        local_path = None
-        if not hf_available and local_model.exists() and local_model.resolve().is_dir():
-            local_path = str(local_model.resolve())
-        self.model_volume = ensure_model_volume(
-            model_id,
-            revision=meta.get("revision"),
-            local_path=local_path,
-            log=request.log or print,
-        )
-
-    def _ensure_draft_volume(
-        self,
-        request: RunEnvironmentRequest,
-    ) -> str | None:
-        """Auto-provision a Modal Volume for an auxiliary draft model.
-
-        EAGLE3-style speculative decoding wants a draft model alongside the
-        target weights.  When ``draft_meta.json`` sits next to ``meta.json``,
-        upload it to its own Modal Volume and return the name so the sandbox
-        can mount it read-only at ``/draft_model``.
-        """
-        if request.ref_dir is None:
-            return None
-        draft_meta_path = request.ref_dir / "draft_meta.json"
-        if not draft_meta_path.exists():
-            return None
-        from vibe_serve.sandbox.modal_model_setup import ensure_model_volume
-
-        draft_meta = json.loads(draft_meta_path.read_text())
-        draft_model_id = draft_meta.get("model_id")
-        if not draft_model_id:
-            raise ValueError(
-                f"draft_meta.json at {draft_meta_path} missing required 'model_id' field"
-            )
-        hf_available = bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
-        local_draft = request.ref_dir / "draft_model"
-        local_path = None
-        if not hf_available and local_draft.exists() and local_draft.resolve().is_dir():
-            local_path = str(local_draft.resolve())
-        return ensure_model_volume(
-            draft_model_id,
-            revision=draft_meta.get("revision"),
-            local_path=local_path,
-            log=request.log or print,
         )
 
 

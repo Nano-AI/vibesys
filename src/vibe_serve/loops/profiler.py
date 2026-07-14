@@ -4,7 +4,7 @@ Two loops drive the Profiler agent today: ``agent/loop.py`` (per-round
 profiling, owns the round/progress.md side-effects) and
 ``evolve/loop.py`` (per-offspring profiling, with an optional
 Pareto-frontier addendum).  Both build an MCP server spec for the
-analysis tools (torch profiler or nsys), render their own system
+analysis tools (torch profiler), render their own system
 prompt, and call ``ctx.invoke(kind="profiler", ...)`` with a
 ``ProfilerSummary`` fallback.
 
@@ -37,17 +37,10 @@ def mcp_spec(profiler_kind: str):
             command="python",
             args=["torch_profiler/server.py"],
         )
-    if profiler_kind == "neuron":
-        return MCPServerSpec(
-            name="vibeserve-neuron-profiler",
-            command="python",
-            args=["neuron_profiler/server.py"],
-        )
-    return MCPServerSpec(
-        name="vibeserve-nsys-profiler",
-        command="python",
-        args=["nsys_profiler/server.py"],
-    )
+    # No profiler MCP for other kinds (the cpu / stream-snapshot path is
+    # profiler-free — perf comes from the benchmark harness). Callers treat
+    # None as "skip MCP".
+    return None
 
 
 def invoke_profiler(

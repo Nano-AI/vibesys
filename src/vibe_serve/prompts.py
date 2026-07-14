@@ -15,7 +15,7 @@ Two concepts:
 :class:`ComputeBackendFragment` is the Python contract for backend fragments:
 its :attr:`~ComputeBackendFragment.NAMES` class attribute is the canonical
 list of fragment names, and concrete subclasses
-(:class:`CudaComputeBackendFragment`, :class:`MetalComputeBackendFragment`) anchor
+(:class:`CpuComputeBackendFragment`) anchor
 each backend in the ``_FRAGMENT_IMPLS`` registry. Adding a fragment
 name requires updating ``NAMES`` and creating a ``<name>.j2`` file
 under every backend dir (an empty file is a deliberate skip).
@@ -169,24 +169,6 @@ class ComputeBackendFragment(ABC):
             )
 
 
-class CudaComputeBackendFragment(ComputeBackendFragment):
-    """Fragments for the CUDA backend (NVIDIA GPUs)."""
-
-    backend = ComputeBackend.CUDA
-
-
-class MetalComputeBackendFragment(ComputeBackendFragment):
-    """Fragments for the Metal backend (Apple Silicon, MPS)."""
-
-    backend = ComputeBackend.METAL
-
-
-class TrainiumComputeBackendFragment(ComputeBackendFragment):
-    """Fragments for the Trainium backend (AWS NeuronCores)."""
-
-    backend = ComputeBackend.TRAINIUM
-
-
 class CpuComputeBackendFragment(ComputeBackendFragment):
     """Fragments for the CPU backend (native CPU / compiled engine)."""
 
@@ -194,9 +176,6 @@ class CpuComputeBackendFragment(ComputeBackendFragment):
 
 
 _FRAGMENT_IMPLS: dict[ComputeBackend, type[ComputeBackendFragment]] = {
-    ComputeBackend.CUDA: CudaComputeBackendFragment,
-    ComputeBackend.METAL: MetalComputeBackendFragment,
-    ComputeBackend.TRAINIUM: TrainiumComputeBackendFragment,
     ComputeBackend.CPU: CpuComputeBackendFragment,
 }
 
