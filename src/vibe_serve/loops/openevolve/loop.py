@@ -60,7 +60,7 @@ def run_openevolve_loop(
     agent_backend: str | None = None,
     cli_provider: str | None = None,
     backend: ComputeBackend = DEFAULT_COMPUTE_BACKEND,
-    modality: str = "text_generation",
+    modality: str = "stream-snapshot",
 ) -> bool:
     """Run a MAP-Elites driven evolutionary search.
 

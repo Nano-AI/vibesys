@@ -283,7 +283,7 @@ def run_evolve_loop(
     agent_backend: str | None = None,
     cli_provider: str | None = None,
     backend: ComputeBackend = DEFAULT_COMPUTE_BACKEND,
-    modality: str = "text_generation",
+    modality: str = "stream-snapshot",
     objectives: list[Objective] | None = None,
     frontier_bias: float = 0.7,
 ) -> bool:

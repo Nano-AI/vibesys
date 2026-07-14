@@ -35,15 +35,7 @@ from vibe_serve.sandbox.run_environment import (
 )
 
 _OUTER_LOOPS = ("agent", "plain", "evolve", "openevolve")
-_MODALITIES = (
-    "text_generation",
-    "image_generation",
-    "video_generation",
-    "text_to_speech",
-    "speech_to_text",
-    "realtime_audio",
-    "stream-snapshot",
-)
+_MODALITIES = ("stream-snapshot",)
 
 
 # ---------------------------------------------------------------------------
@@ -174,14 +166,14 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--skills-dir",
-        default=[Path("resources/skills/serving-systems")],
+        default=None,
         action="append",
         type=Path,
         help=(
             "Path to a skill source (can be repeated). Each entry can be "
             "either a single skill directory (containing a top-level "
             "`SKILL.md`) or a parent directory of multiple skill directories. "
-            "Default: `resources/skills/serving-systems/`."
+            "No skills are attached by default."
         ),
     )
     parser.add_argument(
@@ -302,17 +294,6 @@ def load_config_and_skills(
             if isinstance(args.skills_dir, list)
             else ([str(args.skills_dir)] if args.skills_dir else None)
         )
-        # Trainium targets get the vendored AWS NKI skills automatically so the
-        # implementer can write NeuronCore kernels. Other backends are
-        # unaffected; --no-skills still disables everything.
-        if backend == ComputeBackend.TRAINIUM:
-            nki_skills = (
-                PROJECT_ROOT / "resources" / "skills" / "neuron-agentic-development" / "skills"
-            )
-            if nki_skills.is_dir():
-                skills = skills or []
-                if str(nki_skills) not in skills:
-                    skills.append(str(nki_skills))
     return config, skills, backend
 
 
@@ -421,7 +402,7 @@ def _build_agent_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-rounds", type=int, default=24)
     parser.add_argument("--max-retries-per-round", type=int, default=3)
     parser.add_argument("--start-round", type=int, default=None, metavar="N")
-    parser.add_argument("--modality", default="text_generation", choices=_MODALITIES)
+    parser.add_argument("--modality", default="stream-snapshot", choices=_MODALITIES)
     parser.add_argument(
         "--domain",
         default=DEFAULT_DOMAIN,
@@ -579,7 +560,7 @@ def _build_evolve_parser() -> argparse.ArgumentParser:
         metavar="NAME:DIRECTION",
     )
     parser.add_argument("--frontier-bias", type=float, default=0.7)
-    parser.add_argument("--modality", default="text_generation", choices=_MODALITIES)
+    parser.add_argument("--modality", default="stream-snapshot", choices=_MODALITIES)
     return parser
 
 
@@ -673,7 +654,7 @@ def _build_openevolve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-iterations", type=int, default=16)
     parser.add_argument("--k-inspirations", type=int, default=3)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--modality", default="text_generation", choices=_MODALITIES)
+    parser.add_argument("--modality", default="stream-snapshot", choices=_MODALITIES)
     return parser
 
 

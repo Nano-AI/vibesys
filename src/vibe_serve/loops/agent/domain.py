@@ -36,7 +36,7 @@ from pathlib import Path
 
 from vibe_serve.prompts import render_string
 
-DEFAULT_DOMAIN = "llm-serving"
+DEFAULT_DOMAIN = "streaming-ivm"
 
 # The roles a domain pack can contribute to. Each maps to a ``## <role>`` section
 # in the domain file and a ``{{ domain_<role> }}`` injection point in the
