@@ -1,3 +1,0 @@
-[submodule "3rd_party/transformers"]
-	path = 3rd_party/transformers
-	url = git@github.com:huggingface/transformers.git

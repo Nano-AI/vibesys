@@ -67,7 +67,7 @@ class TestBuildParser:
 
 
 class TestMain:
-    _BASE_ARGV = ["vibe-serve", "--outer-loop", "plain"]
+    _BASE_ARGV = ["vibe-database", "--outer-loop", "plain"]
 
     def _patch_run(self, return_value: bool):
         return patch(

@@ -1,4 +1,4 @@
-# reference/ — the correctness ground truth (VibeServe `--ref`)
+# reference/ — the correctness ground truth (vibe-database `--ref`)
 
 The reference for this target is the **DuckDB batch-recompute oracle**: at each event-time
 snapshot `t_k` it recomputes the query over all events with `ts ≤ t_k` (binding `now() = t_k`)
@@ -9,7 +9,7 @@ engine's window model (see `DESIGN.md`, `CONTRACT.md`).
 
 ## Layout
 
-- `reference.py` — the single top-level entrypoint (VibeServe requires exactly one `.py` in a
+- `reference.py` — the single top-level entrypoint (vibe-database requires exactly one `.py` in a
   `reference/` dir). Re-exports `Oracle`; run directly to print the oracle changelog for a query.
 - `core/` — shared source-of-truth modules, placed on the import path by `reference.py` and by
   the `accuracy_checker/` and `benchmark/` slots (via `../reference/core`). Keeping them here
@@ -28,6 +28,6 @@ engine's window model (see `DESIGN.md`, `CONTRACT.md`).
 
 ## Not the reference (deliberately)
 
-The Python maintainers are **not** the VibeServe reference in the correctness sense — the
+The Python maintainers are **not** the vibe-database reference in the correctness sense — the
 oracle is. They exist to (a) self-test the harness (each is exact, so it scores 1.0 vs the
 oracle) and (b) seed the eventual Rust engine. See `DESIGN.md` §2 and `TASKS.md`.

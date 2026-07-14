@@ -1,4 +1,4 @@
-"""Unified ``vibe-serve`` CLI.
+"""Unified ``vibe-database`` CLI.
 
 The loop is picked by ``--outer-loop {agent, plain, evolve}``:
 
@@ -89,8 +89,8 @@ def _extract_loop_selection(argv: list[str]) -> tuple[str, list[str]]:
 
 def _fail(msg: str) -> None:
     print(
-        f"vibe-serve: {msg}\n"
-        f"Usage: vibe-serve --outer-loop {{{'|'.join(_OUTER_LOOPS)}}} "
+        f"vibe-database: {msg}\n"
+        f"Usage: vibe-database --outer-loop {{{'|'.join(_OUTER_LOOPS)}}} "
         f"[loop-specific args...]",
         file=sys.stderr,
     )
@@ -269,7 +269,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Compute backend to target. Overrides [backend].name in "
-            f"agent.toml. Defaults to 'cuda'. Supported: {', '.join(KNOWN_COMPUTE_BACKENDS)}."
+            f"agent.toml. Defaults to 'cpu'. Supported: {', '.join(KNOWN_COMPUTE_BACKENDS)}."
         ),
     )
 
@@ -396,7 +396,7 @@ def _prune_rounds_state(exp_dir: Path, keep_up_to: int) -> None:
 
 def _build_agent_parser() -> argparse.ArgumentParser:
     parser = _make_parser(
-        prog="vibe-serve --outer-loop agent",
+        prog="vibe-database --outer-loop agent",
         description="Run the autonomous orchestrator-driven build loop.",
     )
     parser.add_argument("--max-rounds", type=int, default=24)
@@ -543,7 +543,7 @@ def _resolve_objectives(args: argparse.Namespace) -> list:
 
 def _build_evolve_parser() -> argparse.ArgumentParser:
     parser = _make_parser(
-        prog="vibe-serve --outer-loop evolve",
+        prog="vibe-database --outer-loop evolve",
         description="Run the evolutionary-search build loop.",
     )
     parser.add_argument("--max-generations", type=int, default=8)
@@ -645,7 +645,7 @@ def _run_evolve(args: argparse.Namespace) -> None:
 
 def _build_openevolve_parser() -> argparse.ArgumentParser:
     parser = _make_parser(
-        prog="vibe-serve --outer-loop openevolve",
+        prog="vibe-database --outer-loop openevolve",
         description=(
             "Run the OpenEvolve-style MAP-Elites search loop: behavioral "
             "feature binning + cell-uniform parent selection."
@@ -721,7 +721,7 @@ def _run_openevolve(args: argparse.Namespace) -> None:
 
 def _build_plain_parser() -> argparse.ArgumentParser:
     parser = _make_parser(
-        prog="vibe-serve --outer-loop plain",
+        prog="vibe-database --outer-loop plain",
         description=(
             "Run issue-tracker driven loop: perf_eval files issues, "
             "implementer drains them one at a time."
@@ -797,7 +797,7 @@ def _run_plain(args: argparse.Namespace) -> None:
         debug=args.debug,
         acc_checker=str(args.acc_checker) if args.acc_checker else None,
         bench=str(args.bench) if args.bench else None,
-        nsys_profiler=str(PROJECT_ROOT / "examples" / "nsys_profiler"),
+        nsys_profiler=str(args.nsys_profiler) if args.nsys_profiler else None,
         skills_dirs=skills,
         run_environment=run_environment_spec_from_args(args),
         agent_backend=args.agent_backend,

@@ -9,18 +9,18 @@ what does 'good' mean here?"* — kept separate from the neutral prompt skeleton
 Pick one with `--domain` (agent loop):
 
 ```bash
-vibe-serve --outer-loop agent --domain llm-serving ...      # default
-vibe-serve --outer-loop agent --domain generic ...          # no domain context
-vibe-serve --outer-loop agent --domain ./my-domain.md ...   # your own (a path)
+vibe-database --outer-loop agent --domain streaming-ivm ...   # default
+vibe-database --outer-loop agent --domain generic ...         # no domain context
+vibe-database --outer-loop agent --domain ./my-domain.md ...  # your own (a path)
 ```
 
 `--domain` accepts either a **built-in name** (a `<name>.md` next to this file)
 or a **path** to your own `.md` file anywhere on disk. Built-ins:
 
-| Domain        | What it does |
-|---------------|--------------|
-| `llm-serving` | The default. LLM inference server context: the `serving-systems` skill/references, `/model` weights, the accuracy + benchmark + reward-hack judge gates. |
-| `generic`     | Empty — no domain prose injected. The neutral baseline; copy it to start your own. |
+| Domain          | What it does |
+|-----------------|--------------|
+| `streaming-ivm` | The default. Non-monotonic, time-windowed incremental view maintenance: the retraction-correctness implementer context, the oracle-parity + reward-hack judge gates, and the correctness-leads-throughput orchestrator sequencing. |
+| `generic`       | Empty — no domain prose injected. The neutral baseline; copy it to start your own. |
 
 ## Anatomy of a domain file
 
@@ -59,8 +59,8 @@ Rules:
   framing.
 - **`## orchestrator` is optional.** Omit it to inject nothing into the planner
   prompt (its neutral skeleton still applies). Add it to give the planner
-  domain-specific strategy — `llm-serving` uses it for the
-  continuous-batching/attention-kernel/CUDA-graph optimization floor.
+  domain-specific strategy — `streaming-ivm` uses it to sequence rounds so
+  correctness leads and throughput follows, one non-monotonic pattern at a time.
 - Write normal Markdown prose. The base template owns the surrounding structure
   (task, pass criteria, workspace, output contract); your section owns the
   domain content.
@@ -74,7 +74,7 @@ use any of these in any section without tracking which role you're in:
 
 | Variable | Meaning |
 |----------|---------|
-| `modality` | The `--modality` value (e.g. `text_generation`). |
+| `modality` | The `--modality` value (e.g. `stream-snapshot`). |
 | `reference_path` | Path to the reference implementation. |
 | `bench_path` | Benchmark harness dir, or falsy if no benchmark is attached. |
 | `accuracy_checker_path` | Accuracy checker dir, or falsy if not attached. |
@@ -103,7 +103,7 @@ Example (inside a `## judge` section):
    (what to check). Leave a section out to inject nothing for that role.
 4. Optionally add `## single_agent` for the `--inner-loop single-agent` ablation;
    omit it to derive it from the other two.
-5. Run `vibe-serve --outer-loop agent --domain <name-or-path> ...`.
+5. Run `vibe-database --outer-loop agent --domain <name-or-path> ...`.
 
 That's it — no code change. A new built-in domain is just a new `.md` file here;
 a private domain is just a path you pass.
@@ -115,6 +115,6 @@ concerns are deliberately *not* part of a domain file:
 
 - **Language/tooling** (e.g. "use `uv`/`pytest`") lives in the base prompt and is
   the job of the (separate) language-selection work, not the domain.
-- **Profiling** (nsys/torch GPU capture) is selected by `--profiler` and rendered
-  by the profiler prompts, not the domain. Domain-specific profiling is future
-  work tied to pluggable profilers.
+- **Profiling** is selected by `--profiler` and rendered by the profiler prompts,
+  not the domain. Domain-specific profiling is future work tied to pluggable
+  profilers.

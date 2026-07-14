@@ -1,7 +1,7 @@
 # I/O Contract v1
 
 The fixed interface every engine under test — the DuckDB oracle, Flink, RisingWave, the
-Rust reference, and the VibeServe-synthesized engine — conforms to. If an engine reads
+Rust reference, and the vibe-database-synthesized engine — conforms to. If an engine reads
 this input and produces this output, it is comparable and gradable by `accuracy.py`.
 Parameters (`W`, `S`, `budget`, topics) come from `config.py`; nothing here is hardcoded
 per engine. The workload is engine-neutral (§4).

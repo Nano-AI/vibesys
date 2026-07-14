@@ -1,4 +1,4 @@
-"""Reference oracle entrypoint (VibeServe `--ref`).
+"""Reference oracle entrypoint (vibe-database `--ref`).
 
 The correctness ground truth for this target is the DuckDB batch-recompute **oracle**
 (`core/oracle.py`): at each event-time snapshot t_k it recomputes the query over all events
@@ -6,7 +6,7 @@ with ts <= t_k, binding `now() = t_k`. Every engine under test — Flink, Rising
 synthesized bespoke engine — is scored on per-snapshot deviation from this oracle (accuracy
 is a measured, symmetric metric, not a pass/fail gate; see DESIGN.md).
 
-This is the single top-level `.py` in `reference/` (VibeServe requires exactly one); the
+This is the single top-level `.py` in `reference/` (vibe-database requires exactly one); the
 shared source-of-truth modules live in `core/` and are put on the import path below. Run
 directly, it prints the oracle's changelog for a query — a human-readable view of "the one
 correct answer" at each snapshot.

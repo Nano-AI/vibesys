@@ -4,7 +4,7 @@ Reports the two performance axes of the thesis (accuracy is graded separately by
 checker.py):
 
   * THROUGHPUT  -- events processed per second (the engine's intrinsic ceiling on this
-    workload). Emitted as the `Primary metric:` line the VibeServe Perf Evaluator reads,
+    workload). Emitted as the `Primary metric:` line the vibe-database Perf Evaluator reads,
     and as `events_per_sec` in the --output-json file.
   * LATENCY     -- per-snapshot maintain-step time percentiles (p50/p95/p99).
 
@@ -129,7 +129,7 @@ def _print(m):
             f"p95 {lat[95]:.3f} ms  p99 {lat[99]:.3f} ms"
         )
     print("-" * 60)
-    # The VibeServe Perf Evaluator reads this line; `events_per_sec` names the JSON field
+    # The vibe-database Perf Evaluator reads this line; `events_per_sec` names the JSON field
     # (OBJECTIVE.md declares it the Headline metric).
     print(f"Primary metric: events_per_sec = {m['throughput_eps']:.0f}")
     print("=" * 60)

@@ -57,7 +57,7 @@ def _agent_label(kind: str) -> str:
 
 
 # Per-provider CLI skill-discovery paths, matching upstream
-# vibe-serve-skills install.sh conventions. Each CLI tool auto-loads
+# vibe-database-skills install.sh conventions. Each CLI tool auto-loads
 # skills from a flat directory of `<skill-name>/SKILL.md`.
 _CLI_SKILL_DIRS: tuple[str, ...] = (
     ".claude/skills",
@@ -73,7 +73,7 @@ def _discover_skill_dirs(root: Path) -> list[Path]:
 
     A "skill directory" is any directory containing a ``SKILL.md`` file.
     This accepts both flat layouts (``.agents/skills/<name>/SKILL.md``) and
-    the tier-organized layout from vibe-serve-skills
+    the tier-organized layout from vibe-database-skills
     (``skills/<tier>/<name>/SKILL.md``).
     """
     if (root / "SKILL.md").is_file():

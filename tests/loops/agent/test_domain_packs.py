@@ -114,8 +114,7 @@ def test_render_role_branches_on_context(tmp_path: Path):
     """A role section rendered with bench_path set should reference it."""
     f = tmp_path / "d.md"
     f.write_text(
-        "# D\n\n## judge\n"
-        "{% if bench_path %}Benchmark lives at {{ bench_path }}.{% endif %}\n"
+        "# D\n\n## judge\n{% if bench_path %}Benchmark lives at {{ bench_path }}.{% endif %}\n"
     )
     with_bench = render_domain_section(f, "judge", modality="stream-snapshot", bench_path="/BENCHX")
     without_bench = render_domain_section(f, "judge", modality="stream-snapshot", bench_path=None)

@@ -4,11 +4,7 @@ This directory holds **fragments** — small reusable Jinja snippets that get co
 
 ```
 _backend/
-├── cuda/                            ← cuda fragments
-│   ├── device_dtype.j2
-│   ├── judge_device_correctness.j2
-│   └── profiling_workflow.j2
-└── metal/                           ← metal fragments (mirrors cuda)
+└── cpu/                             ← cpu fragments
     ├── device_dtype.j2
     ├── judge_device_correctness.j2
     └── profiling_workflow.j2
@@ -25,11 +21,10 @@ Explicit kwargs passed to `prompt.render(...)` override auto-injected fragments 
 ## Conventions for adding a new fragment
 
 1. Pick a stem that reads cleanly as a Jinja variable
-   (e.g. `gpu_env_setup`, not `setup-gpu`).
+   (e.g. `env_setup`, not `setup-env`).
 2. Create the fragment in **every** backend directory
-   (`cuda/<stem>.j2`, `metal/<stem>.j2`, …). Missing files mean a
-   template that uses `{{ stem }}` will silently render empty under
-   that backend.
+   (`cpu/<stem>.j2`, …). Missing files mean a template that uses
+   `{{ stem }}` will silently render empty under that backend.
 3. The fragment should be a self-contained snippet — typically one to
    a few sentences, or a single fenced code block. No `{% block %}`,
    no full document headers; the parent template owns structure.
@@ -55,8 +50,7 @@ Explicit kwargs passed to `prompt.render(...)` override auto-injected fragments 
    …and register it in `_FRAGMENT_IMPLS`.
 4. Wire up the backend's runtime impl under
    `vibe_database/backends/<new>/` and register it in
-   `backends/__init__.py`. See the existing CUDA and Metal impls for
-   the pattern.
+   `backends/__init__.py`. See the existing CPU impl for the pattern.
 
 ## Python contract
 
@@ -75,8 +69,8 @@ The canonical list of fragment names lives on `ComputeBackendFragment.NAMES` (in
   empty string. Use when the fragment topic genuinely doesn't apply
   to this backend and silence is better than confusion.
 - **Soft skip** — short placeholder prose explaining the absence
-  (e.g. metal's `profiling_workflow.j2` says "Profiler-guided
-  analysis is not yet wired up..."). Use when the LLM benefits from
-  knowing the topic exists but the implementation doesn't.
+  (e.g. a `profiling_workflow.j2` that says "Profiler-guided analysis
+  is not yet wired up..."). Use when the agent benefits from knowing
+  the topic exists but the implementation doesn't.
 
 Both pass validation; `validate()` only checks the file exists.

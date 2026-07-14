@@ -83,7 +83,7 @@ def test_extract_loop_selection_unknown_outer_loop_exits():
     ],
 )
 def test_main_routes_to_runner(loop_name: str, runner_attr: str):
-    argv = ["vibe-serve", "--outer-loop", loop_name, "--exp-name", "x"]
+    argv = ["vibe-database", "--outer-loop", loop_name, "--exp-name", "x"]
     with patch.object(sys, "argv", argv), patch(f"vibe_database.cli.{runner_attr}") as runner:
         main()
         runner.assert_called_once()

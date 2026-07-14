@@ -1,41 +1,46 @@
-# VibeServe: Can AI Agents Build Bespoke LLM Serving Systems?
+# vibe-database: Can AI Agents Build Bespoke Streaming Query Engines?
 
-[![arXiv](https://img.shields.io/badge/arXiv-2605.06068-b31b1b.svg)](https://arxiv.org/abs/2605.06068)
-
-**An agentic loop that synthesizes bespoke LLM serving systems — one per (model, hardware, workload) target — instead of forcing every deployment through a single general-purpose runtime.**
-
-<p align="center">
-  <img src="docs/figures/idea.png" width="85%" alt="Generic serving today vs. VibeServe's per-target bespoke systems">
-</p>
-
-## Updates
-
-- **2026-05** — Blog post: [Let AI Agents Write Your Serving Stack with VibeServe](https://syfi.cs.washington.edu/blog/2026-05-12-introducing-vibeserve/).
-- **2026-05** — Paper released on arXiv: [2605.06068](https://arxiv.org/abs/2605.06068).
+**An agentic loop that synthesizes bespoke streaming / database query engines — one per
+`(query, workload, hardware)` target — instead of forcing every stream through a single
+general-purpose engine.**
 
 ## Introduction
 
-VibeServe explores a new approach to LLM serving: instead of relying on one general-purpose runtime to support every model, workload, and hardware target, we use AI agents to generate bespoke serving systems for each deployment scenario. The project asks whether long-horizon coding agents can synthesize complete LLM serving stacks end-to-end, including scheduling, caching, runtime logic, correctness checks, and performance optimizations tailored to a specific target.
+vibe-database explores a new approach to stream processing and incremental view maintenance:
+instead of relying on one general-purpose engine (Flink, Materialize, RisingWave) to support
+every query, workload, and hardware target, we use AI agents to generate a bespoke query engine
+for each deployment scenario. The project asks whether long-horizon coding agents can synthesize
+a complete streaming query engine end-to-end — the incremental-maintenance logic, retraction
+handling, window state, correctness checks, and performance optimizations tailored to a specific
+query.
 
-The system is organized as a multi-agent optimization loop. An outer loop plans the search over system designs using persistent state such as issues, memory, and git history, while an inner loop implements candidate systems, validates correctness against a reference implementation, and measures performance on the target benchmark. Across standard and non-standard serving scenarios, VibeServe matches highly optimized systems like vLLM in mainstream deployments and achieves substantial gains in specialized settings involving predicted-output decoding, hybrid prompt caching, streaming ASR, constrained JSON decoding, multimodal inference, and Apple Silicon deployment.
+The system is organized as a multi-agent optimization loop. An outer loop plans the search over
+engine designs using persistent state (issues, memory, git history), while an inner loop
+implements candidate engines, validates correctness against a batch-recompute oracle, and
+measures throughput on the target benchmark. The flagship target is `streaming-ivm-bench`:
+**non-monotonic, time-windowed** SQL over an append-only event stream, graded per-snapshot
+against a DuckDB oracle — the regime where general streaming engines either lose accuracy or pay
+heavily in state to stay correct.
 
 ## Architecture
 
-<p align="center">
-  <img src="docs/figures/architecture.png" width="90%" alt="VibeServe architecture: outer loop dispatches per-round tasks to an inner loop of Implementer / Accuracy Judge / Performance Evaluator agents">
-</p>
-
 The framework factors the work along two axes:
 
-- **Outer loop** — a search policy operating over a git-recorded history of validated checkpoints. It picks the next optimization, dispatches one concrete task to the inner loop, and updates persistent planning state (issues, long-term memory file, commit graph). 
+- **Outer loop** — a search policy operating over a git-recorded history of validated
+  checkpoints. It picks the next optimization, dispatches one concrete task to the inner loop,
+  and updates persistent planning state (issues, long-term memory file, commit graph).
 - **Inner loop** — three role-specialized coding-agent invocations on a shared workspace:
-  - *Implementer* writes/edits the candidate serving system.
-  - *Accuracy Judge* runs the user-supplied checker against the reference and inspects diffs/runtime behavior for reward-hacking patterns; only correct candidates exit the inner loop.
-  - *Performance Evaluator* profiles the implementation (Nsight Systems, PyTorch profiler) and feeds bottleneck hints back to the policy.
-- **Skills library** — Agent Skills entries distilled from existing serving engines and research literature (continuous batching, paged-KV, FlashInfer/FlashAttention, MLX, hybrid-cache management, …). New model families, hardware platforms, and optimization techniques are added by writing a skill, not by modifying the framework.
-- **Execution environment** — an isolated workspace that mounts the user-provided artifacts read-only (so the Implementer cannot edit the checker or reference) and exposes the target hardware (local CUDA, Modal, Docker, or Apple Silicon) plus profilers.
+  - *Implementer* writes/edits the candidate query engine.
+  - *Accuracy Judge* runs the user-supplied checker against the oracle and inspects diffs /
+    runtime behavior for reward-hacking patterns; only correct candidates exit the inner loop.
+  - *Performance Evaluator* profiles the implementation and feeds bottleneck hints back to the
+    policy.
+- **Execution environment** — an isolated workspace that mounts the user-provided artifacts
+  read-only (so the Implementer cannot edit the checker or reference) and exposes the target
+  hardware plus profilers.
 
-Each candidate is a git commit; the outer loop only advances on Judge-validated implementations, so incorrect candidates can never derail subsequent rounds.
+Each candidate is a git commit; the outer loop only advances on Judge-validated implementations,
+so incorrect candidates can never derail subsequent rounds.
 
 ## Installation
 
@@ -50,52 +55,51 @@ cp agent.toml.example agent.toml
 ## Quickstart
 
 ```bash
-# Issue-tracker outer loop, Codex CLI, Docker on local CUDA, 4 rounds
-vibe-serve \
-  --ref examples/moonshine-streaming/reference \
-  --acc-checker examples/moonshine-streaming/accuracy_checker \
-  --bench examples/moonshine-streaming/benchmark \
+# Agent outer loop, local CPU execution, streaming-ivm domain
+vibe-database \
+  --ref examples/streaming-ivm-bench/reference \
+  --acc-checker examples/streaming-ivm-bench/accuracy_checker \
+  --bench examples/streaming-ivm-bench/benchmark \
   --exp-name my-experiment \
-  --docker \
-  --agent-backend cli --cli-provider codex \
-  --max-rounds 4 \
-  --modality speech_to_text
+  --backend cpu \
+  --domain streaming-ivm \
+  --modality stream-snapshot \
+  --max-rounds 4
 ```
 
-`--outer-loop` defaults to `agent`.  Pass `--outer-loop plain` or `--outer-loop evolve` to switch.  See `vibe-serve --outer-loop <kind> --help` for loop-specific flags.
-
-See `vibe-serve --outer-loop <kind> --help` for loop-specific flags.
+`--outer-loop` defaults to `agent`. Pass `--outer-loop plain` or `--outer-loop evolve` to
+switch. See `vibe-database --outer-loop <kind> --help` for loop-specific flags.
 
 A separate entry point exposes the issue MCP server used by the plain loop:
 
 ```bash
-vibe-serve-issue-mcp                         # serves issues.json over MCP
+vibe-database-issue-mcp                       # serves issues.json over MCP
 ```
 
-## Domains — pointing vibeserve at your problem space
+## Domains — pointing vibe-database at your problem space
 
-A **domain** is the bundle of cross-cutting context the agents need for whatever
-you're building: the background knowledge the implementer must read, and the
-correctness/performance/integrity gates the judge enforces. It answers *"what
-kind of system is this, and what does 'good' mean here?"* — kept separate from
-the neutral prompt skeleton and from the per-task I/O contract (`--modality`).
+A **domain** is the bundle of cross-cutting context the agents need for whatever you're
+building: the background knowledge the implementer must read, and the correctness / performance /
+integrity gates the judge enforces. It answers *"what kind of system is this, and what does
+'good' mean here?"* — kept separate from the neutral prompt skeleton and from the per-task I/O
+contract (`--modality`).
 
 Select one with `--domain` (agent loop):
 
 ```bash
-vibe-serve --outer-loop agent --domain llm-serving ...      # default
-vibe-serve --outer-loop agent --domain generic ...          # no domain context
-vibe-serve --outer-loop agent --domain ./my-domain.md ...   # your own (a path)
+vibe-database --outer-loop agent --domain streaming-ivm ...   # default
+vibe-database --outer-loop agent --domain generic ...         # no domain context
+vibe-database --outer-loop agent --domain ./my-domain.md ...  # your own (a path)
 ```
 
-`--domain` takes a **built-in name** (`llm-serving`, `generic`) **or a path** to
-your own `.md` file anywhere on disk. A domain is just a single Markdown file:
-free-form description prose, then `## implementer`, `## judge`, and (optionally)
-`## single_agent` sections that drop into the prompts at one labelled point each.
-Omit `## single_agent` and it's derived from the other two. Author your own by
-copying `generic.md` — no code change required.
+`--domain` takes a **built-in name** (`streaming-ivm`, `generic`) **or a path** to your own
+`.md` file anywhere on disk. A domain is just a single Markdown file: free-form description
+prose, then `## implementer`, `## judge`, and (optionally) `## single_agent` sections that drop
+into the prompts at one labelled point each. Omit `## single_agent` and it's derived from the
+other two. Author your own by copying `generic.md` — no code change required.
 
-Full authoring guide: [`src/vibe_serve/loops/agent/templates/_domain/README.md`](src/vibe_serve/loops/agent/templates/_domain/README.md).
+Full authoring guide:
+[`src/vibe_database/loops/agent/templates/_domain/README.md`](src/vibe_database/loops/agent/templates/_domain/README.md).
 
 ## Per-target inputs
 
@@ -103,19 +107,20 @@ Each evaluation target lives under `examples/<name>/`:
 
 ```
 examples/<name>/
-├── OBJECTIVE.md          # free-form deployment goal (model + hardware + workload + interface)
-├── reference/            # reference HuggingFace Transformers implementation
-│   ├── reference.py
-│   ├── config.json
-│   └── meta.json         # model id + revision
-├── accuracy_checker/     # checker.py + tests/data — the correctness gate
+├── OBJECTIVE.md          # free-form deployment goal (query + workload + hardware + interface)
+├── reference/            # exact-correctness reference maintainers + shared config
+├── accuracy_checker/     # checker.py + oracle — the correctness gate
 ├── benchmark/            # benchmark.py + load levels — emits the metric to optimize
 └── README.md             # human-readable description
 ```
 
-`OBJECTIVE.md` is read at the start of every run and must live next to `--ref` (sibling, not inside). See `examples/Llama-3-8B/`, `examples/moonshine-streaming/`, `examples/qwen3-32b-code-edit/`, `examples/olmo-hybrid-prefix-caching/`, `examples/Llama-3.1-8B-Instruct-MLX-8bit/`, `examples/show-o2-1.5B-HQ-h100/`, and `examples/show-o2-1.5B-HQ-macbook/` for the paper scenarios.
+`OBJECTIVE.md` is read at the start of every run and must live next to `--ref` (sibling, not
+inside). See `examples/streaming-ivm-bench/` for the flagship scenario — its `OBJECTIVE.md`,
+`CONTRACT.md`, and `DESIGN.md` document the queries, the snapshot grid, and the four flavors of
+non-monotonicity the engine must handle.
 
-For multi-objective evolutionary runs, drop an `objectives.toml` next to `OBJECTIVE.md` (or pass `--objective name:max|min` flags) — see `vibe-serve --outer-loop evolve --help`.
+For multi-objective evolutionary runs, drop an `objectives.toml` next to `OBJECTIVE.md` (or pass
+`--objective name:max|min` flags) — see `vibe-database --outer-loop evolve --help`.
 
 ## Configuration (`agent.toml`)
 
@@ -125,7 +130,7 @@ name = "claude-sonnet-4-6"   # auto-detected provider for claude-* / gpt-* / gem
 # provider = "anthropic"     # optional override
 
 [backend]
-name = "cuda"                 # or "metal" for Apple Silicon (local exec only)
+name = "cpu"                  # compiled query engines run on CPU
 
 [agent]
 backend = "cli"               # "cli" (codex/claude/gemini/opencode) or "deepagents"
@@ -137,16 +142,14 @@ cli_provider = "codex"        # which coding-agent harness to drive
 # [[perf_eval.load_levels]]
 # rate = 1
 # duration = 20
-# max_tokens = 128
 ```
 
-Provider credentials live in `.env` — see `.env.example`. The CLI flags `--agent-backend` / `--cli-provider` / `--backend` override these.
+Provider credentials live in `.env` — see `.env.example`. The CLI flags `--agent-backend` /
+`--cli-provider` / `--backend` override these.
 
-The config is validated against a typed schema on load (`vibe_serve/config.py`): unknown sections or keys, unknown providers/backends, and missing required fields are rejected with an error rather than silently ignored.
-
-## Skills library
-
-`resources/skills/serving-systems/` contains the Agent Skills entries the inner loop's agents read at runtime: model architectures, serving algorithms, programming frameworks, backend libraries, hardware platforms, and reference engines. New optimization techniques and model families enter as new skill entries; the framework itself is target-agnostic.
+The config is validated against a typed schema on load (`vibe_database/config.py`): unknown
+sections or keys, unknown providers/backends, and missing required fields are rejected with an
+error rather than silently ignored.
 
 ## Outputs
 
@@ -162,28 +165,26 @@ exp_env/<run>/
 │   ├── rounds.json           # per-round audit
 │   ├── state.json            # cursor (plain loop)
 │   ├── issues.json           # IssueBoard (plain loop)
-│   ├── population.json       # Individual list (evolve loop)
-│   └── docker.log
+│   └── population.json       # Individual list (evolve loop)
 └── reference/                # snapshot of --ref at start
 ```
 
 Resume any run with `--resume` (defaults to "latest"):
 
 ```bash
-vibe-serve --resume                  # newest run
-vibe-serve --resume 20260507-...     # specific dir
+vibe-database --resume                  # newest run
+vibe-database --resume 20260507-...     # specific dir
 ```
 
 ## Repository layout
 
 ```
-src/vibe_serve/
-├── cli.py                        # single entry point: `vibe-serve`
+src/vibe_database/
+├── cli.py                        # single entry point: `vibe-database`
 ├── context.py                    # _RunContext: lifecycle + ctx.invoke()
 ├── agent_runner.py               # invoke wrappers + structured-response extraction
 ├── prompts.py                    # Jinja + backend-fragment renderer
 ├── schemas.py                    # Pydantic response schemas
-├── llm_client.py                 # LLM client factory
 ├── config.py / constants.py
 │
 ├── loops/                        # the three outer-loop search policies
@@ -193,21 +194,19 @@ src/vibe_serve/
 │   └── profiler.py               # shared Performance Evaluator helper
 │
 ├── sandbox/                      # execution-environment policy
-│   ├── docker_sandbox.py
-│   ├── modal_sandbox.py
-│   ├── modal_model_setup.py
+│   ├── docker_sandbox.py         # (dormant — local exec is the default path)
+│   ├── modal_sandbox.py          # (dormant)
 │   └── run_environment.py
 │
 ├── agents/                       # coding-agent harness abstraction
 │   └── callbacks.py              # LangChain logger (deepagents path)
-└── backends/                     # cuda / metal compute backends
+└── backends/                     # cpu compute backend
 
-examples/                         # six paper scenarios + nsys/torch profiler skills
-resources/skills/serving-systems/ # Agent Skills library
+examples/streaming-ivm-bench/     # flagship streaming query-engine target
 ```
 
 - **agent**: pre-round → profiler → orchestrator plan → implementer/judge
-  retry up to `--max-retries-per-round` (default 3).  Always exhausts
+  retry up to `--max-retries-per-round` (default 3). Always exhausts
   `--max-rounds`; supports `revert_to_round` mid-loop.
 - **plain**: drain `IssueBoard` (one impl + one judge per issue, BLOCK
   after `--max-attempts-per-issue`) → `perf_eval` (may file new issues).
@@ -225,20 +224,4 @@ resources/skills/serving-systems/ # Agent Skills library
 uv run pytest                                       # full suite
 uv run pytest tests/loops/plain/test_plain_loop.py  # one file
 uv run pytest -k orchestrator                       # by keyword
-```
-
-## Citation
-
-If you use VibeServe in your research, please cite:
-
-```bibtex
-@misc{kamahori2026vibeserveaiagentsbuild,
-      title={VibeServe: Can AI Agents Build Bespoke LLM Serving Systems?},
-      author={Keisuke Kamahori and Shihang Li and Simon Peter and Baris Kasikci},
-      year={2026},
-      eprint={2605.06068},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2605.06068},
-}
 ```

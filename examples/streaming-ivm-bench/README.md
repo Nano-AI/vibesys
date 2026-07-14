@@ -1,7 +1,7 @@
 # streaming-ivm-bench (MVP)
 
 A scriptable benchmark for the thesis: **a bespoke, workload-specialized engine
-(synthesized by VibeServe) maintains non-monotonic + time-windowed SQL better than
+(synthesized by vibe-database) maintains non-monotonic + time-windowed SQL better than
 general streaming engines (Flink, RisingWave, Materialize)** — measured by throughput,
 latency, and **per-snapshot accuracy**.
 
@@ -71,7 +71,7 @@ the tradeoff is shown, not hidden. See `DESIGN.md` §5-6.3.
 
 ## Files
 
-| file | role | maps to VibeServe target slot |
+| file | role | maps to vibe-database target slot |
 |------|------|-------------------------------|
 | `config.py` | shared window/budget/snapshot semantics, prices, infra params | — |
 | `generate.py` | deterministic, seeded, engine-neutral event generator → `events.csv` | workload/data |
@@ -96,7 +96,7 @@ the tradeoff is shown, not hidden. See `DESIGN.md` §5-6.3.
   reusable accuracy checker + throughput/latency harness, a Kafka substrate + load driver,
   and Flink + RisingWave baseline adapters conforming to one I/O contract.
 - **Isn't yet:** live baseline *numbers* (the SQL/adapters/compose are written and validated
-  but not run here — needs `docker compose up`); the VibeServe-synthesized Rust engine and
+  but not run here — needs `docker compose up`); the vibe-database-synthesized Rust engine and
   the CPU/native backend (Phase 2); the full sweep + head-to-head results (Phase 3).
 
 ## Extending

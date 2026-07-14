@@ -1,6 +1,6 @@
 # TASKS — Bespoke Streaming Engine Benchmark
 
-Working checklist for the 3-phase plan. Cross-referenced with the VibeServe target
+Working checklist for the 3-phase plan. Cross-referenced with the vibe-database target
 contract (`examples/<name>/` = `OBJECTIVE.md` + `reference/` + `accuracy_checker/` +
 `benchmark/`; inner loop Implementer→Accuracy Judge→Perf Evaluator). See `DESIGN.md`
 for methodology and `README.md` for the current MVP.
@@ -21,7 +21,7 @@ for methodology and `README.md` for the current MVP.
 - Budgets: 4 cores / 8 GB per engine; Kafka single broker, 8 partitions.
 
 ## The two "references" (do not conflate)
-1. **VibeServe `reference/` = the DuckDB snapshot oracle** (correctness ground truth).
+1. **vibe-database `reference/` = the DuckDB snapshot oracle** (correctness ground truth).
    REQUIRED. Already built (`oracle.py`). The accuracy checker grades every engine
    against it.
 2. **Optional hand-written Rust "reference engine"** = a performance baseline / the
@@ -86,11 +86,11 @@ awaiting `docker compose up`.
 
 ---
 
-## PHASE 2 — Extend VibeServe for streaming + Rust (CPU/native)
-**Goal:** VibeServe can **build, run, accuracy-check, and profile a Rust streaming
+## PHASE 2 — Extend vibe-database for streaming + Rust (CPU/native)
+**Goal:** vibe-database can **build, run, accuracy-check, and profile a Rust streaming
 engine** — i.e. the Implementer agent can synthesize `engine.rs`, and the loop grades it.
 **Done when:** a *hand-written* trivial-but-correct Rust engine passes the accuracy
-checker and emits a perf metric *through VibeServe's loop machinery* (agent not involved
+checker and emits a perf metric *through vibe-database's loop machinery* (agent not involved
 yet). This proves the plumbing before spending agent budget.
 
 - ☐ 2.1  **New `native`/CPU backend** in `ComputeBackend`: local/docker sandbox (no GPU,
@@ -105,7 +105,7 @@ yet). This proves the plumbing before spending agent budget.
 - ☐ 2.4  **Rust engine scaffold**: a Cargo project skeleton the agent fills — stream
   reader (Kafka/stdin per contract), snapshot emitter, a `Maintainer` trait/entrypoint.
 - ☐ 2.5  **Accuracy checker adaptation**: grade a *compiled* engine at the process level
-  vs oracle (VibeServe's stock checker imports a Python `main.py`; a Rust binary is
+  vs oracle (vibe-database's stock checker imports a Python `main.py`; a Rust binary is
   graded as a subprocess). Reuse 1.6.
 - ☐ 2.6  **Benchmark adaptation**: run the Rust binary under the 1.7 harness; emit
   `Primary metric:`.

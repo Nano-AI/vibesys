@@ -307,7 +307,7 @@ class TestCliAgentRunner:
         assert result.analysis == "fenced"
 
     def test_cli_runner_materializes_skills_into_workspace(self, monkeypatch, tmp_path):
-        # Tier-organized source tree (like vibe-serve-skills):
+        # Tier-organized source tree (like vibe-database-skills):
         #   skill_src/
         #     algorithms/myskill/SKILL.md
         #     algorithms/myskill/file.txt
@@ -355,7 +355,7 @@ class TestCliAgentRunner:
         )
 
         # Each skill is flattened into every per-CLI discovery path,
-        # matching the upstream vibe-serve-skills install.sh convention.
+        # matching the upstream vibe-database-skills install.sh convention.
         for cli_dir in (
             ".claude/skills",
             ".agents/skills",

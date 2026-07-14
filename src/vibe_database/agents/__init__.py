@@ -21,7 +21,7 @@ from .base import AgentRunner
 # ``vibe_database.agents.callbacks`` (which triggers this ``__init__``), and both
 # concrete runners import back from ``vibe_database.agent_runner``. Importing
 # them eagerly here turned the cycle into an ImportError on the first entry
-# point that hits ``agent_runner`` first (e.g. the ``vibe-serve`` script).
+# point that hits ``agent_runner`` first (e.g. the ``vibe-database`` script).
 __all__ = ["AgentRunner", "DeepAgentsRunner", "CliAgentRunner", "build_agent_runner"]
 
 

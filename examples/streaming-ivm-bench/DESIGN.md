@@ -5,7 +5,7 @@ harness already built and green — see `README.md`.
 
 ## 1. Claim under test
 
-> A **bespoke, workload-specialized database engine** (synthesized by VibeServe)
+> A **bespoke, workload-specialized database engine** (synthesized by vibe-database)
 > maintains **non-monotonic + time-windowed** SQL results **more efficiently** than
 > **general-purpose streaming engines** — specifically Apache Flink and Materialize.
 
@@ -30,7 +30,7 @@ what specialization buys against the best general runtimes.
 
 | system | role | notes |
 |--------|------|-------|
-| **Bespoke engine** | protagonist | Hand-written **Rust** reference first (sets the achievable bar), then the **VibeServe-synthesized** engine (the research artifact). *Not* the Python maintainer — that is a correctness reference only, not a throughput contender. |
+| **Bespoke engine** | protagonist | Hand-written **Rust** reference first (sets the achievable bar), then the **vibe-database-synthesized** engine (the research artifact). *Not* the Python maintainer — that is a correctness reference only, not a throughput contender. |
 | **Apache Flink** | baseline | Flink SQL job over Kafka, event-time + watermarks. |
 | **Materialize** | baseline | Materialized view / temporal-filter query over Kafka. |
 | **DuckDB oracle** | **ground-truth definer, NOT a SUT** | Batch recompute per snapshot = the one correct answer. Every SUT is *scored* on per-snapshot deviation from it (accuracy is a metric, not a pass/fail gate). |
@@ -196,7 +196,7 @@ Report the full grid; **explicitly flag regions where the bespoke engine does NO
   and to validate the measurement harness before JVM engines exist.
 - **Bespoke-engine implementation quality** confounds "specialization": the hand-written
   Rust reference isolates *what specialization achieves*; the synthesized engine then
-  shows *what VibeServe achieves* against that bar.
+  shows *what vibe-database achieves* against that bar.
 - **Late/out-of-order events & watermarks:** MVP assumes in-order event-time. A late-data
   policy must be fixed identically across engines before claiming parity.
 
@@ -206,7 +206,7 @@ Report the full grid; **explicitly flag regions where the bespoke engine does NO
 - **Phase 1** measurement plane: Kafka (docker-compose) + rate-controlled load driver + marker-based latency probe + cgroup resource sampler. Validate against the Python maintainer (no JVM yet).
 - **Phase 2** Flink SUT: Flink SQL on Kafka; certify vs oracle; throughput/latency/cost.
 - **Phase 3** Materialize SUT: same protocol.
-- **Phase 4** Bespoke SUT: hand-written Rust reference, then VibeServe-synthesized.
+- **Phase 4** Bespoke SUT: hand-written Rust reference, then vibe-database-synthesized.
 - **Phase 5** sweep matrix (§8) → tables + plots.
 
 ## 11. Open decisions to resolve before Phase 1 code
