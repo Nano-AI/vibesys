@@ -119,7 +119,7 @@ def _invoke_loop(tmp_path, ref_file, runner, **kwargs):
     defaults.update(kwargs)
     with (
         patch("vibe_serve.context._build_model", return_value="mock-model"),
-        patch("vibe_serve.backends.cuda.LocalShellBackend"),
+        patch("vibe_serve.backends.cpu.LocalShellBackend"),
         patch("vibe_serve.context.build_agent_runner", return_value=runner),
         patch("vibe_serve.context.PROJECT_ROOT", tmp_path),
     ):

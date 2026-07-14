@@ -22,12 +22,12 @@ _SNAPSHOT_DIR = Path(__file__).with_name("fixtures") / "prompt_snapshots"
 _ROLES = ("implementer", "judge", "single_agent", "orchestrator")
 
 _BASE_CONTEXT = {
-    "modality": "text_generation",
+    "modality": "stream-snapshot",
     "reference_path": "/workspace/reference/main.py",
-    "task": "TASK: add a streaming /v1/completions endpoint.",
-    "pass_criteria": "PASS: pytest passes and /v1/completions streams valid SSE.",
-    "objective": "OBJECTIVE: maximize median_tok_per_sec.",
-    "roadmap_text": "- major-1: todo - establish the serving optimization floor.",
+    "task": "TASK: incrementally maintain the windowed SUM + HAVING query (Q1).",
+    "pass_criteria": "PASS: pytest passes and per-snapshot output matches the oracle at 1.0.",
+    "objective": "OBJECTIVE: maximize events_per_sec at correctness parity.",
+    "roadmap_text": "- major-1: todo - reach exact-match 1.0 on Q1 threshold retraction.",
     "env_kind": "local",
 }
 
@@ -36,7 +36,7 @@ _CONTEXTS = {
     | {
         "bench_path": "/workspace/bench",
         "accuracy_checker_path": "/workspace/acc_checker",
-        "runtime_notes": "Runtime note: local Docker workspace with NVIDIA CUDA access.",
+        "runtime_notes": "Runtime note: local CPU workspace.",
     },
     "minimal": _BASE_CONTEXT
     | {
@@ -101,7 +101,7 @@ def _render_prompt(domain: str, role: str, context: dict[str, object]) -> str:
             retry=1,
             feedback=None,
             reference_path=context["reference_path"],
-            profiler_kind="nsys",
+            profiler_kind="torch",
             profile_focus="",
             domain_single_agent=_domain_section(domain, "single_agent", context),
         )
@@ -146,30 +146,30 @@ def _assert_matches_snapshot(domain: str, case_name: str, role: str, rendered: s
 
 @pytest.mark.parametrize("case_name,context", _CONTEXTS.items())
 @pytest.mark.parametrize("role", _ROLES)
-def test_llm_serving_prompt_snapshot(case_name: str, context: dict[str, object], role: str):
-    rendered = _render_prompt("llm-serving", role, context)
-    _assert_matches_snapshot("llm-serving", case_name, role, rendered)
+def test_streaming_ivm_prompt_snapshot(case_name: str, context: dict[str, object], role: str):
+    rendered = _render_prompt("streaming-ivm", role, context)
+    _assert_matches_snapshot("streaming-ivm", case_name, role, rendered)
 
 
-def test_llm_serving_rendered_prompts_keep_required_domain_content():
+def test_streaming_ivm_rendered_prompts_keep_required_domain_content():
     context = _CONTEXTS["full"]
-    prompts = {role: _render_prompt("llm-serving", role, context) for role in _ROLES}
+    prompts = {role: _render_prompt("streaming-ivm", role, context) for role in _ROLES}
 
-    assert "Model weights are at `/model`" in prompts["implementer"]
-    assert "serving-systems" in prompts["implementer"]
-    assert "Benchmark sanity" in prompts["judge"]
-    assert "Accuracy checker — required to pass" in prompts["judge"]
-    assert "Reward-hack detection" in prompts["judge"]
-    assert "Static-inspection scope" in prompts["judge"]
-    assert "do not let yourself cheat" in prompts["single_agent"]
-    assert "Optimization priority" in prompts["orchestrator"]
-    assert "CUDA graphs" in prompts["orchestrator"]
+    assert "incremental-view-maintenance" in prompts["implementer"]
+    assert "non-monotonic" in prompts["implementer"].lower()
+    assert "Sliding window" in prompts["implementer"]
+    assert "correctness parity with the oracle" in prompts["judge"]
+    assert "Retraction correctness is the crux" in prompts["judge"]
+    assert "No reward hacking" in prompts["judge"]
+    assert "non-monotonic" in prompts["single_agent"].lower()
+    assert "correctness leads and throughput follows" in prompts["orchestrator"]
+    assert "anti-join" in prompts["orchestrator"].lower()
 
 
-def test_minimal_llm_serving_prompt_omits_optional_checker_paths():
+def test_minimal_streaming_ivm_prompt_omits_optional_checker_paths():
     context = _CONTEXTS["minimal"]
-    judge = _render_prompt("llm-serving", "judge", context)
-    single_agent = _render_prompt("llm-serving", "single_agent", context)
+    judge = _render_prompt("streaming-ivm", "judge", context)
+    single_agent = _render_prompt("streaming-ivm", "single_agent", context)
 
     assert "/workspace/bench/benchmark.py" not in judge
     assert "/workspace/acc_checker/checker.py" not in judge
@@ -177,13 +177,12 @@ def test_minimal_llm_serving_prompt_omits_optional_checker_paths():
     assert "/workspace/acc_checker/checker.py" not in single_agent
 
 
-def test_generic_prompts_do_not_receive_llm_serving_domain_content():
+def test_generic_prompts_do_not_receive_streaming_ivm_domain_content():
     context = _CONTEXTS["full"]
     prompts = {role: _render_prompt("generic", role, context) for role in _ROLES}
 
-    assert "Model weights are at `/model`" not in prompts["implementer"]
-    assert "Required: read the relevant skill BEFORE writing code" not in prompts["implementer"]
-    assert "Benchmark sanity" not in prompts["judge"]
-    assert "Reward-hack detection" not in prompts["judge"]
-    assert "do not let yourself cheat" not in prompts["single_agent"]
-    assert "Optimization priority" not in prompts["orchestrator"]
+    assert "incremental-view-maintenance" not in prompts["implementer"]
+    assert "Sliding window, snapshot-sampled" not in prompts["implementer"]
+    assert "correctness parity with the oracle" not in prompts["judge"]
+    assert "Retraction correctness is the crux" not in prompts["judge"]
+    assert "correctness leads and throughput follows" not in prompts["orchestrator"]

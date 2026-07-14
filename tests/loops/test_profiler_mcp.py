@@ -1,4 +1,4 @@
-"""Tests for the profiler MCP servers (nsys + torch).
+"""Tests for the profiler MCP servers (torch).
 
 We verify tool registration via ``FastMCP.list_tools`` and exercise a few
 tools end-to-end through ``FastMCP.call_tool``. The stdio JSON-RPC framing
@@ -8,7 +8,6 @@ itself is the ``mcp`` package's responsibility.
 import asyncio
 import importlib.util
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -21,8 +20,7 @@ def _load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, str(path))
     module = importlib.util.module_from_spec(spec)
     # Inject the server's parent dir onto sys.path BEFORE exec so the
-    # server's ``import analyze_nsys`` / ``import analyze_torch_profile``
-    # succeeds.
+    # server's ``import analyze_torch_profile`` succeeds.
     parent = str(path.parent)
     inserted = False
     if parent not in sys.path:
@@ -37,14 +35,6 @@ def _load_module(name: str, path: Path):
 
 
 _REPO = Path(__file__).resolve().parent.parent.parent
-
-
-@pytest.fixture(scope="module")
-def nsys_server_mod():
-    return _load_module(
-        "_nsys_server",
-        _REPO / "examples" / "nsys_profiler" / "server.py",
-    )
 
 
 @pytest.fixture(scope="module")
@@ -63,65 +53,6 @@ async def _list_tool_names(server) -> set[str]:
 async def _call_tool(server, name: str, **kwargs) -> str:
     _, structured = await server.call_tool(name, kwargs)
     return structured["result"]
-
-
-# ---------------------------------------------------------------------------
-# nsys MCP server
-# ---------------------------------------------------------------------------
-
-
-class TestNsysMcpServer:
-    def test_registers_expected_tools(self, nsys_server_mod):
-        server = nsys_server_mod.build_server()
-        names = asyncio.run(_list_tool_names(server))
-        assert names == {
-            "export",
-            "tables",
-            "kernels",
-            "cpu_overhead",
-            "idle_gaps",
-            "memory",
-            "graph_replays",
-            "step_timeline",
-            "query",
-            "summary",
-        }
-
-    def test_tables_tool_reports_empty_db(self, nsys_server_mod, tmp_path):
-        """Against an empty SQLite file, ``tables`` returns a no-output marker."""
-        db = tmp_path / "empty.sqlite"
-        sqlite3.connect(str(db)).close()
-
-        server = nsys_server_mod.build_server()
-        out = asyncio.run(_call_tool(server, "tables", report=str(db)))
-        # No tables → the cmd_tables body prints nothing; the wrapper
-        # coerces that to "(no output)".
-        assert out == "(no output)"
-
-    def test_kernels_tool_reports_no_data(self, nsys_server_mod, tmp_path):
-        """A SQLite file without a CUPTI_ACTIVITY_KIND_KERNEL table returns a friendly message."""
-        db = tmp_path / "nokernels.sqlite"
-        sqlite3.connect(str(db)).close()
-
-        server = nsys_server_mod.build_server()
-        out = asyncio.run(_call_tool(server, "kernels", report=str(db)))
-        assert "No kernel data" in out
-
-    def test_query_tool_runs_arbitrary_sql(self, nsys_server_mod, tmp_path):
-        db = tmp_path / "q.sqlite"
-        conn = sqlite3.connect(str(db))
-        conn.execute("CREATE TABLE t (x INTEGER, y TEXT)")
-        conn.execute("INSERT INTO t VALUES (1, 'a'), (2, 'b')")
-        conn.commit()
-        conn.close()
-
-        server = nsys_server_mod.build_server()
-        out = asyncio.run(
-            _call_tool(server, "query", report=str(db), sql="SELECT * FROM t ORDER BY x"),
-        )
-        assert "x\ty" in out
-        assert "1\ta" in out
-        assert "2\tb" in out
 
 
 # ---------------------------------------------------------------------------

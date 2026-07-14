@@ -2,7 +2,7 @@ You are the Orchestrator agent in an autonomous inference-server build loop. You
 
 ## Objective
 
-OBJECTIVE: maximize median_tok_per_sec.
+OBJECTIVE: maximize events_per_sec at correctness parity.
 
 ## Workspace state
 
@@ -38,7 +38,7 @@ Required this round, in order:
 ### Current `roadmap.md` contents
 
 ```
-- major-1: todo - establish the serving optimization floor.
+- major-1: todo - reach exact-match 1.0 on Q1 threshold retraction.
 ```
 
 
@@ -49,23 +49,18 @@ A library of curated technique-specific skills is installed in your working dire
 
 
 
-## Optimization priority (read before choosing the next task)
+Sequence rounds so **correctness leads and throughput follows**, one non-monotonic pattern at
+a time:
 
-Serving systems have a well-established **optimization floor**: three techniques every production LLM server ships with, because each addresses a fundamental cost source the workload cannot avoid on NVIDIA hardware. Before proposing any workload-specific optimization (speculative decoding, prompt/prefix caching, grammar-constrained decoding fast paths, schema minimization, etc.), confirm all three are in place unless a specific one is **absolutely incompatible** with the objective:
-
-1. **Continuous batching** (see `skills/serving-systems/algorithms/continuous-batching/`).
-2. **Attention kernel** — FlashInfer or FlashAttention (see `skills/serving-systems/backends/flashinfer/` and `skills/serving-systems/backends/flashattention/`).
-3. **CUDA graphs** (see `skills/serving-systems/backends/cuda-graph/`). 
-
-**Only after these three are present and verified** (profiler-confirmed kernel count drops, FlashInfer calls visible, graph replay counters non-zero) should you spend rounds on workload-specific optimizations like speculative decoding, grammar-based fast paths, or prompt / prefix caching.
-
-The three exceptions that let you skip a floor item:
-
-- **Continuous batching**: skip when the benchmark / objective is single-batch by contract.
-- **Attention kernel**: skip when running on non-NVIDIA hardware where neither FlashInfer nor FlashAttention ships (Apple → MLX; AMD → the upstreamed FA AMD port).
-- **CUDA graphs**: skip when the decode shapes are genuinely unbucketable (very rare — even speculative-decoding tree depths and chunked-prefill chunk sizes are ≤ 16 buckets).
-
-If you skip a floor item, cite the specific incompatibility in your `reasoning`. Do NOT skip because "the current profile shows something else is the dominant cost" — the floor items *become* the dominant cost in turn once other work lands, and cycling between "revert this, try that" over exotic optimizations without the floor in place is a common failure mode of this loop.
+- Start from the simplest exact case (windowed `SUM` + `HAVING` retraction, Q1 `metering`),
+  get it to exact-match 1.0, then add the harder patterns — distinct-state (Q2), ranking churn
+  (Q3), anti-join membership (Q4) — rather than attempting all four at once. Q4 (windowed
+  anti-join) is the documented hard case where plain streaming SQL collapses; schedule it once
+  the retraction machinery is solid.
+- Never trade away exactness for speed: the metric is `events_per_sec` **at correctness
+  parity**. Only pursue throughput optimizations (batching, tighter window state, better data
+  layout) on queries already at 1.0. Keep the window/snapshot semantics sourced from
+  `reference/core/config.py` across every round.
 
 ## Task granularity
 

@@ -3,7 +3,7 @@
 Covers the resolver (built-in name / path / error), the section renderer
 (present, empty, missing, ``single_agent`` derivation, context branching), and
 end-to-end injection into the base prompts for both built-in domains
-(``llm-serving`` carries serving prose; ``generic`` injects nothing of its own).
+(``streaming-ivm`` carries IVM prose; ``generic`` injects nothing of its own).
 """
 
 from __future__ import annotations
@@ -31,16 +31,17 @@ _TEMPLATE_DIR = (
 # --------------------------------------------------------------------------- #
 def test_builtins_present():
     names = builtin_domains()
-    assert "llm-serving" in names
+    assert "streaming-ivm" in names
     assert "generic" in names
+    assert "llm-serving" not in names  # LLM-serving domain was removed in the fork
     assert "README" not in names  # the authoring guide is not a domain
-    assert DEFAULT_DOMAIN == "llm-serving"
+    assert DEFAULT_DOMAIN == "streaming-ivm"
 
 
 def test_resolve_builtin_name():
-    d = resolve_domain("llm-serving")
+    d = resolve_domain("streaming-ivm")
     assert d.is_file()
-    assert d.name == "llm-serving.md"
+    assert d.name == "streaming-ivm.md"
 
 
 def test_resolve_path(tmp_path: Path):
@@ -54,7 +55,7 @@ def test_resolve_unknown_raises():
     with pytest.raises(ValueError) as exc:
         resolve_domain("does-not-exist-xyz")
     # error lists the built-ins to guide the user
-    assert "llm-serving" in str(exc.value)
+    assert "streaming-ivm" in str(exc.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -74,16 +75,16 @@ def test_render_empty_role_is_empty():
         assert render_domain_section(d, role) == ""
 
 
-def test_render_llm_serving_has_content():
-    d = resolve_domain("llm-serving")
+def test_render_streaming_ivm_has_content():
+    d = resolve_domain("streaming-ivm")
     impl = render_domain_section(
-        d, "implementer", modality="text_generation", reference_path="/ref"
+        d, "implementer", modality="stream-snapshot", reference_path="/ref"
     )
     assert impl  # non-empty
     # leading/trailing blank lines are stripped — base template owns spacing
     assert impl == impl.strip("\n")
-    # the body keeps its own ## sub-headings (not treated as role delimiters)
-    assert "## Required:" in impl
+    # the body keeps its IVM prose (non-monotonic retraction is the crux)
+    assert "non-monotonic" in impl.lower()
 
 
 def test_deeper_markdown_heading_does_not_delimit_role(tmp_path: Path):
@@ -109,20 +110,17 @@ def test_deeper_markdown_heading_does_not_delimit_role(tmp_path: Path):
     assert judge == "JUDGE-BODY"
 
 
-def test_render_role_branches_on_context():
+def test_render_role_branches_on_context(tmp_path: Path):
     """A role section rendered with bench_path set should reference it."""
-    d = resolve_domain("llm-serving")
-    with_bench = render_domain_section(d, "judge", modality="text_generation", bench_path="/BENCHX")
-    without_bench = render_domain_section(d, "judge", modality="text_generation", bench_path=None)
+    f = tmp_path / "d.md"
+    f.write_text(
+        "# D\n\n## judge\n"
+        "{% if bench_path %}Benchmark lives at {{ bench_path }}.{% endif %}\n"
+    )
+    with_bench = render_domain_section(f, "judge", modality="stream-snapshot", bench_path="/BENCHX")
+    without_bench = render_domain_section(f, "judge", modality="stream-snapshot", bench_path=None)
     assert "/BENCHX" in with_bench
     assert "/BENCHX" not in without_bench
-
-
-def test_single_agent_uses_explicit_section_when_present():
-    # llm-serving.md ships a bespoke ## single_agent section
-    d = resolve_domain("llm-serving")
-    sa = render_domain_section(d, "single_agent", modality="text_generation", reference_path="/ref")
-    assert "do not let yourself cheat" in sa  # text unique to that section
 
 
 def test_single_agent_derives_from_implementer_and_judge(tmp_path: Path):
@@ -134,18 +132,28 @@ def test_single_agent_derives_from_implementer_and_judge(tmp_path: Path):
     assert "JUDGE-BODY" in sa
 
 
+def test_streaming_ivm_single_agent_derives_from_impl_and_judge():
+    # streaming-ivm.md ships no ## single_agent section, so it is derived
+    # from the implementer + judge bodies.
+    d = resolve_domain("streaming-ivm")
+    sa = render_domain_section(d, "single_agent", modality="stream-snapshot", reference_path="/ref")
+    assert sa
+    assert "non-monotonic" in sa.lower()
+    assert "oracle" in sa.lower()  # judge-body correctness-parity language
+
+
 # --------------------------------------------------------------------------- #
 # end-to-end injection into base prompts
 # --------------------------------------------------------------------------- #
 def _render_implementer(domain: str) -> str:
     d = resolve_domain(domain)
     section = render_domain_section(
-        d, "implementer", modality="text_generation", reference_path="/ref"
+        d, "implementer", modality="stream-snapshot", reference_path="/ref"
     )
     return render_template(
         "implementer_prompt.j2",
         template_dir=_TEMPLATE_DIR,
-        modality="text_generation",
+        modality="stream-snapshot",
         domain_implementer=section,
         task="TASK",
         pass_criteria="PC",
@@ -155,19 +163,19 @@ def _render_implementer(domain: str) -> str:
     )
 
 
-def test_llm_serving_injects_into_implementer():
-    out = _render_implementer("llm-serving")
-    # serving-specific prose from the domain pack is present
-    assert "serving" in out.lower()
+def test_streaming_ivm_injects_into_implementer():
+    out = _render_implementer("streaming-ivm")
+    # IVM-specific prose from the domain pack is present
+    assert "retract" in out.lower()
     assert "## Progress tracking" in out  # base skeleton intact
 
 
 def test_generic_injects_nothing_extra():
     generic = _render_implementer("generic")
-    # the only serving refs left are from the modality include, not the domain;
-    # the generic render must be strictly shorter than llm-serving's.
-    serving = _render_implementer("llm-serving")
-    assert len(generic) < len(serving)
+    # the generic render must be strictly shorter than streaming-ivm's, which
+    # carries the injected domain section.
+    streaming = _render_implementer("streaming-ivm")
+    assert len(generic) < len(streaming)
     assert "## Progress tracking" in generic  # base skeleton intact
 
 
@@ -190,7 +198,7 @@ def test_orchestrator_is_a_domain_role():
 
 def _render_orchestrator(domain: str) -> str:
     section = render_domain_section(
-        resolve_domain(domain), "orchestrator", modality="text_generation"
+        resolve_domain(domain), "orchestrator", modality="stream-snapshot"
     )
     return render_template(
         "orchestrator_plan_prompt.j2",
@@ -207,25 +215,24 @@ def _render_orchestrator(domain: str) -> str:
     )
 
 
-def test_llm_serving_provides_orchestrator_optimization_floor():
+def test_streaming_ivm_provides_orchestrator_sequencing():
     section = render_domain_section(
-        resolve_domain("llm-serving"), "orchestrator", modality="text_generation"
+        resolve_domain("streaming-ivm"), "orchestrator", modality="stream-snapshot"
     )
-    assert "Optimization priority" in section
-    assert "Continuous batching" in section
+    assert "correctness leads and throughput follows" in section
+    assert "anti-join" in section.lower()
 
 
-def test_llm_serving_orchestrator_floor_injected_into_plan():
-    out = _render_orchestrator("llm-serving")
-    assert "Optimization priority" in out
-    # the line-39 back-reference resolves when a floor is provided
+def test_streaming_ivm_orchestrator_section_injected_into_plan():
+    out = _render_orchestrator("streaming-ivm")
+    assert "correctness leads and throughput follows" in out
+    # the back-reference resolves when a domain orchestrator section is provided
     assert "the optimization-floor section below" in out
 
 
-def test_generic_orchestrator_has_no_llm_floor():
+def test_generic_orchestrator_has_no_domain_section():
     out = _render_orchestrator("generic")
-    # the prescriptive LLM floor is gone, and its back-reference collapses
-    assert "Optimization priority" not in out
-    assert "Continuous batching" not in out
+    # the domain section is gone, and its back-reference collapses
+    assert "correctness leads and throughput follows" not in out
     assert "the optimization-floor section below" not in out
     assert "## Task granularity" in out  # base skeleton intact
