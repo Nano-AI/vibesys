@@ -56,40 +56,21 @@ def setup_exp_dir(
 
 
 def _ensure_model_weights(ref_dir: Path) -> None:
-    """Ensure model weights exist in ref_dir/model, downloading if needed."""
+    """Keep a pre-provisioned local ``ref_dir/model`` if present; no-op otherwise.
+
+    vibe-database targets are compiled query engines with **no model weights**,
+    so a missing ``model/`` is a valid reference, not an error. HuggingFace
+    auto-download (an LLM-serving concern) was removed in the fork — if a target
+    genuinely needs weights, provide a local ``model/`` directory or symlink and
+    it is preserved as-is.
+    """
     model_path = ref_dir / "model"
 
-    # Remove broken symlink if present
+    # Remove a broken symlink so it doesn't masquerade as present weights.
     if model_path.is_symlink() and not model_path.exists():
         model_path.unlink()
 
-    # Already exists (real dir or valid symlink)
-    if model_path.exists():
-        return
-
-    # Read meta.json for download info
-    meta_path = ref_dir / "meta.json"
-    if not meta_path.exists():
-        raise FileNotFoundError(
-            f"Model weights not found at {model_path} and no meta.json to download from. "
-            f"Either create a model/ directory/symlink or add a meta.json with model_id."
-        )
-
-    meta = json.loads(meta_path.read_text())
-    model_id = meta.get("model_id")
-    if not model_id:
-        raise ValueError(f"meta.json at {meta_path} missing required 'model_id' field")
-
-    revision = meta.get("revision")
-
-    cache_dir = PROJECT_ROOT / ".hf_cache"
-    print(f"[model] Weights not found at {model_path}. Downloading {model_id} to {cache_dir}...")
-    from huggingface_hub import snapshot_download
-
-    downloaded_path = snapshot_download(model_id, revision=revision, cache_dir=str(cache_dir))
-
-    model_path.symlink_to(downloaded_path)
-    print(f"[model] Created symlink {model_path} -> {downloaded_path}")
+    # An existing real dir or valid symlink is kept; absence is fine.
 
 
 class _TeeWriter:
@@ -303,13 +284,10 @@ class _RunContext:
                     shutil.rmtree(d)
 
             if ref_dir is not None:
-                # Modal handles model weights via a remote Volume, so we
-                # skip the local HF download (saves ~30 GB of local cache).
-                # We still fall back to the local path if meta.json is absent.
-                if (
-                    self.run_environment.materialize_local_model_weights
-                    or (ref_dir / "meta.json").exists() is False
-                ):
+                # Preserve a pre-provisioned local ``model/`` when the run
+                # environment materializes weights locally; a model-less
+                # reference (a query engine) is copied straight through.
+                if self.run_environment.materialize_local_model_weights:
                     _ensure_model_weights(ref_dir)
                 self._copy_excluding_extras(ref_dir, self.workspace / "reference")
             else:
