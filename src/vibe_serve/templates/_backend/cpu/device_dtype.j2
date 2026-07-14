@@ -1,0 +1,1 @@
+Native CPU target — there is no torch device or dtype to set. The candidate is a **compiled binary** (e.g. `cargo build --release`) run as a subprocess, not a torch model. Do NOT use CUDA/MPS or any GPU; write straight-line CPU code and optimize it (data layout, allocation, branch-free hot loops) rather than reaching for a device.

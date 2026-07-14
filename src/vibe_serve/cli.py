@@ -42,6 +42,7 @@ _MODALITIES = (
     "text_to_speech",
     "speech_to_text",
     "realtime_audio",
+    "stream-snapshot",
 )
 
 

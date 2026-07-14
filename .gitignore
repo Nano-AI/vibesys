@@ -253,3 +253,8 @@ CLAUDE.md
 # Per-experiment scratch — not part of the repo
 baseline_eval_*/
 sandbox-*/
+
+# streaming-ivm-bench: native infra (Kafka/RisingWave downloads ~1GB + running procs)
+# and the seed-42 event stream (regenerate with `python3 reference/core/generate.py`)
+examples/streaming-ivm-bench/.native/
+examples/streaming-ivm-bench/reference/core/events.csv

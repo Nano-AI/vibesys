@@ -40,11 +40,18 @@ class ComputeBackend(StrEnum):
       profiling uses ``neuron-explorer`` instead of nsys.  Modal offers
       no Trainium, so ``TrainiumBackend.make_sandbox`` raises on
       ``SandboxKind.MODAL``.
+    - ``CPU`` is a native-CPU / compiled-engine target (no GPU/CUDA): the
+      candidate is a compiled binary (e.g. ``cargo build --release``) run
+      as a subprocess, not a torch model. Local-exec only for now, like
+      ``METAL`` — ``CpuBackend.make_sandbox`` raises on Docker/Modal (a
+      portable CPU-container branch is a future hook). Performance is
+      measured by the example's benchmark harness, not a GPU profiler.
     """
 
     CUDA = "cuda"
     METAL = "metal"
     TRAINIUM = "trainium"
+    CPU = "cpu"
 
 
 DEFAULT_COMPUTE_BACKEND = ComputeBackend.CUDA
