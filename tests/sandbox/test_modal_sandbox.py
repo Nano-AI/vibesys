@@ -47,7 +47,7 @@ def mock_modal(monkeypatch):
 
 @pytest.fixture()
 def sandbox(tmp_path, mock_modal):
-    from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+    from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -66,7 +66,7 @@ class TestVpath:
         assert sandbox._vpath("/workspace/foo") == "/workspace/foo"
 
     def test_preserves_passthrough(self, tmp_path, mock_modal):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         sb = ModalSandbox(
             host_workspace=str(tmp_path),
@@ -92,7 +92,7 @@ class TestStart:
         assert "/workspace" in kwargs["volumes"]
 
     def test_start_mounts_model_volume_when_name_given(self, tmp_path, mock_modal):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         sb = ModalSandbox(
             host_workspace=str(tmp_path),
@@ -110,7 +110,7 @@ class TestStart:
         tmp_path,
         mock_modal,
     ):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -132,7 +132,7 @@ class TestStart:
         tmp_path,
         mock_modal,
     ):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -151,7 +151,7 @@ class TestStart:
         tmp_path,
         mock_modal,
     ):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -176,7 +176,7 @@ class TestStart:
         tmp_path,
         mock_modal,
     ):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -208,7 +208,7 @@ class TestStart:
         tmp_path,
         mock_modal,
     ):
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -295,7 +295,7 @@ class TestTransientRetry:
     def test_is_transient_detects_dns_and_connection_errors(self):
         import socket
 
-        from vibe_serve.sandbox.modal_sandbox import _is_transient
+        from vibe_database.sandbox.modal_sandbox import _is_transient
 
         assert _is_transient(socket.gaierror(-2, "Name or service not known"))
         assert _is_transient(ConnectionResetError("Connection reset"))
@@ -312,10 +312,10 @@ class TestTransientRetry:
     def test_retry_recovers_after_transient_error(self, monkeypatch):
         import socket
 
-        from vibe_serve.sandbox.modal_sandbox import _retry_transient
+        from vibe_database.sandbox.modal_sandbox import _retry_transient
 
         # Avoid actual sleeping in the test.
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
 
         calls = {"n": 0}
 
@@ -329,7 +329,7 @@ class TestTransientRetry:
         assert calls["n"] == 3
 
     def test_retry_reraises_non_transient_immediately(self):
-        from vibe_serve.sandbox.modal_sandbox import _retry_transient
+        from vibe_database.sandbox.modal_sandbox import _retry_transient
 
         calls = {"n": 0}
 
@@ -344,9 +344,9 @@ class TestTransientRetry:
     def test_retry_gives_up_after_max_attempts(self, monkeypatch):
         import socket
 
-        from vibe_serve.sandbox.modal_sandbox import _retry_transient
+        from vibe_database.sandbox.modal_sandbox import _retry_transient
 
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
 
         calls = {"n": 0}
 
@@ -362,7 +362,7 @@ class TestTransientRetry:
         """Integration: a flaky sandbox.exec should be transparently retried."""
         import socket
 
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
         sandbox.start()
 
         proc_ok = MagicMock()
@@ -392,7 +392,7 @@ class TestModalCommandExecutor:
     that the agentshim port has landed."""
 
     def _make_executor(self, fake_exec_result=None):
-        from vibe_serve.agents.modal_executor import ModalCommandExecutor
+        from vibe_database.agents.modal_executor import ModalCommandExecutor
 
         fake_sandbox = MagicMock()
         fake_sandbox._sandbox_id = "sb-abc123"
@@ -445,7 +445,7 @@ class TestModalCommandExecutor:
         assert result.stdout == "ok\n"
 
     def test_run_raises_when_sandbox_not_started(self):
-        from vibe_serve.agents.modal_executor import ModalCommandExecutor
+        from vibe_database.agents.modal_executor import ModalCommandExecutor
 
         fake_sandbox = MagicMock()
         fake_sandbox._sandbox = None
@@ -455,7 +455,7 @@ class TestModalCommandExecutor:
 
     def test_run_picks_up_restarted_sandbox_lazily(self):
         """A fallback restart that swaps ``_sandbox`` should be used by the next run()."""
-        from vibe_serve.agents.modal_executor import ModalCommandExecutor
+        from vibe_database.agents.modal_executor import ModalCommandExecutor
 
         wrapper = MagicMock()
         wrapper._sandbox = MagicMock()
@@ -493,7 +493,7 @@ class TestSandboxFallbackRestart:
     """Verify the sandbox-dead fallback path: recreate + retry, preserving the volume."""
 
     def test_is_sandbox_dead_recognizes_shutdown_messages(self):
-        from vibe_serve.sandbox.modal_sandbox import _is_sandbox_dead
+        from vibe_database.sandbox.modal_sandbox import _is_sandbox_dead
 
         assert _is_sandbox_dead(RuntimeError("Sandbox has already shut down"))
         assert _is_sandbox_dead(Exception("Sandbox has exited"))
@@ -511,7 +511,7 @@ class TestSandboxFallbackRestart:
         monkeypatch,
     ):
         """A dead sandbox should be recreated once, then the command re-run."""
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
         sandbox.start()
 
         proc_ok = MagicMock()
@@ -537,7 +537,7 @@ class TestSandboxFallbackRestart:
 
     def test_restart_attempts_capped_by_max(self, sandbox, mock_modal, monkeypatch):
         """After max_restart_attempts, further restarts are refused."""
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
         sandbox._max_restart_attempts = 1
         sandbox.start()
 
@@ -547,14 +547,14 @@ class TestSandboxFallbackRestart:
 
     def test_restart_can_be_disabled(self, tmp_path, mock_modal, monkeypatch):
         """enable_fallback_restart=False disables the recovery path entirely."""
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         sb = ModalSandbox(
             host_workspace=str(tmp_path),
             image="nvcr.io/nvidia/pytorch:25.04-py3",
             enable_fallback_restart=False,
         )
-        monkeypatch.setattr("vibe_serve.sandbox.modal_sandbox.time.sleep", lambda _: None)
+        monkeypatch.setattr("vibe_database.sandbox.modal_sandbox.time.sleep", lambda _: None)
         sb.start()
 
         call = {"n": 0}
@@ -573,7 +573,7 @@ class TestSandboxFallbackRestart:
         """Auxiliary volumes like /draft_model should be added to volumes dict."""
         import modal
 
-        from vibe_serve.sandbox.modal_sandbox import ModalSandbox
+        from vibe_database.sandbox.modal_sandbox import ModalSandbox
 
         sb = ModalSandbox(
             host_workspace=str(tmp_path),

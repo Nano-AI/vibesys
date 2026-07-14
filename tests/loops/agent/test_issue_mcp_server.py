@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from vibe_serve.loops.plain.issue_board import IssueType
-from vibe_serve.loops.plain.mcp_server import build_parser, build_server
+from vibe_database.loops.plain.issue_board import IssueType
+from vibe_database.loops.plain.mcp_server import build_parser, build_server
 
 
 def _ns(tmp_path, *extra: str):

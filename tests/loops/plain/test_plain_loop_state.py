@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from vibe_serve.loops.plain.issue_board import IssueBoard, IssueStatus, IssueType
-from vibe_serve.loops.plain.loop import (
+from vibe_database.loops.plain.issue_board import IssueBoard, IssueStatus, IssueType
+from vibe_database.loops.plain.loop import (
     PlainLoopState,
     _determine_resume_point,
     _load_state,

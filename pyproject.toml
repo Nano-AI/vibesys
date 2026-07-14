@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vibe-serve"
+name = "vibe-database"
 version = "0.1.0"
 description = "AI agent system for generating bespoke LLM serving systems"
 readme = "README.md"
@@ -27,15 +27,15 @@ dependencies = [
 ]
 
 [project.scripts]
-vibe-serve = "vibe_serve.cli:main"
-vibe-serve-issue-mcp = "vibe_serve.loops.plain.mcp_server:main"
+vibe-database = "vibe_database.cli:main"
+vibe-database-issue-mcp = "vibe_database.loops.plain.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["vibe_serve*"]
+include = ["vibe_database*"]
 
 [tool.setuptools.package-data]
-vibe_serve = ["templates/*.j2", "templates/_backend/*/*.j2", "loops/agent/templates/*.j2", "loops/agent/templates/_domain/*.md", "loops/agent/templates/_modality/*/*.j2", "loops/evolve/templates/*.j2", "loops/plain/templates/*.j2", "loops/plain/templates/*/*.j2"]
+vibe_database = ["templates/*.j2", "templates/_backend/*/*.j2", "loops/agent/templates/*.j2", "loops/agent/templates/_domain/*.md", "loops/agent/templates/_modality/*/*.j2", "loops/evolve/templates/*.j2", "loops/plain/templates/*.j2", "loops/plain/templates/*/*.j2"]
 
 [dependency-groups]
 dev = [

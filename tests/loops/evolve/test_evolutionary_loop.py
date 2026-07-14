@@ -15,14 +15,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibe_serve.agents import AgentRunner
-from vibe_serve.loops.evolve.loop import run_evolve_loop
-from vibe_serve.loops.evolve.population import (
+from vibe_database.agents import AgentRunner
+from vibe_database.loops.evolve.loop import run_evolve_loop
+from vibe_database.loops.evolve.population import (
     Individual,
     Objective,
     Population,
 )
-from vibe_serve.schemas import JudgeResponse, MutatorResponse, ProfilerSummary, Verdict
+from vibe_database.schemas import JudgeResponse, MutatorResponse, ProfilerSummary, Verdict
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -118,10 +118,10 @@ def _invoke_loop(tmp_path, ref_file, runner, **kwargs):
     )
     defaults.update(kwargs)
     with (
-        patch("vibe_serve.context._build_model", return_value="mock-model"),
-        patch("vibe_serve.backends.cpu.LocalShellBackend"),
-        patch("vibe_serve.context.build_agent_runner", return_value=runner),
-        patch("vibe_serve.context.PROJECT_ROOT", tmp_path),
+        patch("vibe_database.context._build_model", return_value="mock-model"),
+        patch("vibe_database.backends.cpu.LocalShellBackend"),
+        patch("vibe_database.context.build_agent_runner", return_value=runner),
+        patch("vibe_database.context.PROJECT_ROOT", tmp_path),
     ):
         return run_evolve_loop(**defaults)
 

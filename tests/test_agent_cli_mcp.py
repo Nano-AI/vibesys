@@ -22,11 +22,11 @@ from pathlib import Path
 
 import pytest
 
-from vibe_serve._agent_cli.base import MCPServerSpec
-from vibe_serve._agent_cli.claude import ClaudeCodeCodingAgent
-from vibe_serve._agent_cli.codex import CodexCodingAgent
-from vibe_serve._agent_cli.gemini import GeminiCodingAgent
-from vibe_serve._agent_cli.opencode import OpencodeCodingAgent
+from vibe_database._agent_cli.base import MCPServerSpec
+from vibe_database._agent_cli.claude import ClaudeCodeCodingAgent
+from vibe_database._agent_cli.codex import CodexCodingAgent
+from vibe_database._agent_cli.gemini import GeminiCodingAgent
+from vibe_database._agent_cli.opencode import OpencodeCodingAgent
 
 
 def _spec() -> MCPServerSpec:
@@ -35,7 +35,7 @@ def _spec() -> MCPServerSpec:
         command="python",
         args=[
             "-m",
-            "vibe_serve.loops.plain.mcp_server",
+            "vibe_database.loops.plain.mcp_server",
             "issues.json",
             "--creator",
             "judge",
@@ -53,7 +53,7 @@ def _spec_with_env() -> MCPServerSpec:
     return MCPServerSpec(
         name="vibeserve-issues",
         command="python",
-        args=["-m", "vibe_serve.loops.plain.mcp_server", "issues.json"],
+        args=["-m", "vibe_database.loops.plain.mcp_server", "issues.json"],
         env={"MY_VAR": "my_value", "OTHER": "x"},
     )
 
@@ -247,7 +247,7 @@ class TestCodexMCP:
         args_value = args_entries[0].split("=", 1)[1]
         assert args_value.startswith("[") and args_value.endswith("]")
         assert '"-m"' in args_value
-        assert '"vibe_serve.loops.plain.mcp_server"' in args_value
+        assert '"vibe_database.loops.plain.mcp_server"' in args_value
         assert '"--creator"' in args_value
         assert '"judge"' in args_value
         assert '"--cap"' in args_value
@@ -310,7 +310,7 @@ class TestCodexMCP:
 def test_base_class_default_install_uninstall_are_noop(tmp_path: Path):
     """A subclass that doesn't override should silently do nothing."""
 
-    from vibe_serve._agent_cli.base import CodingAgent
+    from vibe_database._agent_cli.base import CodingAgent
 
     class DummyAgent(CodingAgent):
         def generate(self, prompt, cwd=None, timeout=None, silent=False):

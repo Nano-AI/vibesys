@@ -2,8 +2,8 @@
 
 import pytest
 
-from vibe_serve.loops.plain.issue_board import IssueBoard, IssueStatus, IssueType
-from vibe_serve.loops.plain.tools import build_issue_tools
+from vibe_database.loops.plain.issue_board import IssueBoard, IssueStatus, IssueType
+from vibe_database.loops.plain.tools import build_issue_tools
 
 
 def _make_store(tmp_path) -> IssueBoard:

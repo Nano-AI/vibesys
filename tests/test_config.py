@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vibe_serve.config import _load_config, _load_dotenv_file
+from vibe_database.config import _load_config, _load_dotenv_file
 
 
 class TestLoadConfigValid:

@@ -12,17 +12,17 @@ from pathlib import Path
 
 import pytest
 
-from vibe_serve.loops.agent.domain import (
+from vibe_database.loops.agent.domain import (
     DEFAULT_DOMAIN,
     DOMAIN_ROLES,
     builtin_domains,
     render_domain_section,
     resolve_domain,
 )
-from vibe_serve.prompts import render_template
+from vibe_database.prompts import render_template
 
 _TEMPLATE_DIR = (
-    Path(__file__).resolve().parents[3] / "src" / "vibe_serve" / "loops" / "agent" / "templates"
+    Path(__file__).resolve().parents[3] / "src" / "vibe_database" / "loops" / "agent" / "templates"
 )
 
 

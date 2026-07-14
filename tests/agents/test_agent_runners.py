@@ -1,4 +1,4 @@
-"""Tests for the :mod:`vibe_serve.agents` runner abstraction."""
+"""Tests for the :mod:`vibe_database.agents` runner abstraction."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibe_serve.agents import build_agent_runner
-from vibe_serve.agents.callbacks import AgentLogger
-from vibe_serve.agents.cli_runner import CliAgentRunner
-from vibe_serve.agents.deepagents_runner import DeepAgentsRunner
-from vibe_serve.config import Config
-from vibe_serve.schemas import (
+from vibe_database.agents import build_agent_runner
+from vibe_database.agents.callbacks import AgentLogger
+from vibe_database.agents.cli_runner import CliAgentRunner
+from vibe_database.agents.deepagents_runner import DeepAgentsRunner
+from vibe_database.config import Config
+from vibe_database.schemas import (
     JudgeResponse,
     Verdict,
 )
@@ -41,8 +41,8 @@ class TestDeepAgentsRunner:
             verdict=Verdict.PASS,
         )
         with (
-            patch("vibe_serve.agents.deepagents_runner.create_deep_agent") as mock_create,
-            patch("vibe_serve.agents.deepagents_runner._run_typed_agent") as mock_run,
+            patch("vibe_database.agents.deepagents_runner.create_deep_agent") as mock_create,
+            patch("vibe_database.agents.deepagents_runner._run_typed_agent") as mock_run,
         ):
             mock_create.return_value = MagicMock(name="deep_agent")
             mock_run.return_value = pass_response
@@ -88,11 +88,11 @@ class TestDeepAgentsRunner:
 
         with (
             patch(
-                "vibe_serve.agents.deepagents_runner.create_deep_agent",
+                "vibe_database.agents.deepagents_runner.create_deep_agent",
                 side_effect=_capture,
             ),
             patch(
-                "vibe_serve.agents.deepagents_runner._run_typed_agent",
+                "vibe_database.agents.deepagents_runner._run_typed_agent",
                 return_value=_judge_fallback(),
             ),
         ):
@@ -201,7 +201,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             provider,
@@ -239,7 +239,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -278,7 +278,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -328,7 +328,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -384,7 +384,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -429,7 +429,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -478,7 +478,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -538,7 +538,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -588,7 +588,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -640,7 +640,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -675,7 +675,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -707,7 +707,7 @@ class TestCliAgentRunner:
     def test_cli_runner_docker_uses_command_executor(self, monkeypatch, tmp_path):
         from types import SimpleNamespace
 
-        from vibe_serve.agents.docker_executor import DockerCommandExecutor
+        from vibe_database.agents.docker_executor import DockerCommandExecutor
 
         captured: list = []
 
@@ -740,7 +740,7 @@ class TestCliAgentRunner:
 
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -787,7 +787,7 @@ class TestCliAgentRunner:
 
     def test_cli_runner_invokes_install_then_generate_then_uninstall(self, monkeypatch, tmp_path):
         """The mcp_servers kwarg triggers a strict install → generate → uninstall sandwich."""
-        from vibe_serve._agent_cli.base import MCPServerSpec
+        from vibe_database._agent_cli.base import MCPServerSpec
 
         captured: list = []
         fake_cls = _make_fake_agent_class(
@@ -796,7 +796,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -831,7 +831,7 @@ class TestCliAgentRunner:
     def test_cli_runner_uninstalls_even_when_generate_raises(self, monkeypatch, tmp_path):
         """uninstall_mcp_servers must run in finally so a crashing generate
         doesn't leave stale config in the workspace."""
-        from vibe_serve._agent_cli.base import MCPServerSpec
+        from vibe_database._agent_cli.base import MCPServerSpec
 
         captured: list = []
         fake_cls = _make_fake_agent_class(
@@ -841,7 +841,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",
@@ -878,7 +878,7 @@ class TestCliAgentRunner:
         )
         monkeypatch.setitem(
             __import__(
-                "vibe_serve.agents.cli_runner",
+                "vibe_database.agents.cli_runner",
                 fromlist=["_PROVIDER_CLASSES"],
             )._PROVIDER_CLASSES,
             "claude",

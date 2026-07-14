@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vibe_serve.context import _RunContext
+from vibe_database.context import _RunContext
 
 
 def _git(ws, *args):

@@ -1,17 +1,17 @@
-"""Tests for the per-issue markdown renderer (vibe_serve/plain/render.py)."""
+"""Tests for the per-issue markdown renderer (vibe_database/plain/render.py)."""
 
 from datetime import datetime
 
 import pytest
 
-from vibe_serve.loops.plain.issue_board import (
+from vibe_database.loops.plain.issue_board import (
     Issue,
     IssueBoard,
     IssueEvent,
     IssueStatus,
     IssueType,
 )
-from vibe_serve.loops.plain.render import (
+from vibe_database.loops.plain.render import (
     issue_md_filename,
     issue_md_path,
     render_all,
@@ -304,7 +304,7 @@ class TestRenderIssueMarkdown:
 
     def test_long_description_is_not_escaped(self):
         """Markdown special chars in the description pass through unmodified
-        (matches the existing progress.md behaviour at vibe_serve/plain/loop.py:147)."""
+        (matches the existing progress.md behaviour at vibe_database/plain/loop.py:147)."""
         issue = _make_issue(description="# A markdown heading\n\n- a list")
         md = render_issue_markdown(issue)
         assert "# A markdown heading" in md

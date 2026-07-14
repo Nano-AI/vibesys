@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from vibe_serve.loops.plain.issue_board import (
+from vibe_database.loops.plain.issue_board import (
     Issue,
     IssueBoard,
     IssueEvent,

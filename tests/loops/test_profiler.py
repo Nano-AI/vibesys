@@ -11,11 +11,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibe_serve.agent_runner import (
+from vibe_database.agent_runner import (
     _parse_profiler_response_text,
     run_profiler_agent,
 )
-from vibe_serve.schemas import (
+from vibe_database.schemas import (
     ImplementerResponse,
     JudgeResponse,
     ProfilerResponse,

@@ -2,15 +2,15 @@
 
 The spec builder is the only issue-tracker-specific piece of the MCP path —
 everything else (file format, file path, install/uninstall) lives in
-``vibe_serve/_agent_cli/``. These tests verify that the per-phase policy params
+``vibe_database/_agent_cli/``. These tests verify that the per-phase policy params
 are encoded correctly into the spec's command-line args list.
 """
 
 from __future__ import annotations
 
-from vibe_serve._agent_cli.base import MCPServerSpec
-from vibe_serve.loops.plain.issue_board import IssueType
-from vibe_serve.loops.plain.mcp_config import build_issue_mcp_spec
+from vibe_database._agent_cli.base import MCPServerSpec
+from vibe_database.loops.plain.issue_board import IssueType
+from vibe_database.loops.plain.mcp_config import build_issue_mcp_spec
 
 
 def test_build_judge_spec_has_correct_shape():
@@ -27,7 +27,7 @@ def test_build_judge_spec_has_correct_shape():
     # Args are forwarded to the standalone server's argparse CLI.
     assert spec.args == [
         "-m",
-        "vibe_serve.loops.plain.mcp_server",
+        "vibe_database.loops.plain.mcp_server",
         "issues.json",
         "--creator",
         "judge",
@@ -50,7 +50,7 @@ def test_build_perf_eval_spec_sorts_allowed_types_alphabetically():
         allowed_types={IssueType.BUG, IssueType.FEATURE, IssueType.PERF},
     )
     args = spec.args
-    assert args[0:2] == ["-m", "vibe_serve.loops.plain.mcp_server"]
+    assert args[0:2] == ["-m", "vibe_database.loops.plain.mcp_server"]
     assert args[2] == "issues.json"
     assert args[args.index("--creator") + 1] == "perf_eval"
     assert args[args.index("--iteration") + 1] == "2"
@@ -82,5 +82,5 @@ def test_build_spec_uses_provided_store_relpath():
     assert "custom/path/issues.json" in spec.args
     assert (
         spec.args[spec.args.index("custom/path/issues.json") - 1]
-        == "vibe_serve.loops.plain.mcp_server"
+        == "vibe_database.loops.plain.mcp_server"
     )
