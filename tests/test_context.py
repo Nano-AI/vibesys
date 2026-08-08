@@ -201,7 +201,7 @@ class _FakeBackend:
 
 
 @pytest.fixture(autouse=True)
-def _native_profiler_preflight_ok(monkeypatch):
+def _native_profiler_preflight_ok(monkeypatch):  # pyright: ignore[reportUnusedFunction] -- autouse fixture, never referenced by name
     monkeypatch.setattr(
         "vibesys.context.preflight_profiler_kind",
         lambda kind: ProfilerPreflightResult(kind, True),

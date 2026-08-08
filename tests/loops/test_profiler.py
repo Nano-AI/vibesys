@@ -3,6 +3,14 @@
 The orchestrate loop's profiler-gating behavior is covered in
 ``tests/test_orchestrate.py``; this module keeps the lower-level
 ProfilerResponse / parser / nsys-toolkit tests.
+
+The ``resources.profilers.nsys.analyze_nsys`` imports below resolve at
+runtime because pytest's ``pythonpath = ["."]`` setting (pyproject.toml)
+puts the repo root on ``sys.path``. Pyright's per-directory execution
+environment for ``tests`` does not carry that same implicit root, so it
+cannot resolve them statically; each import is suppressed by name rather
+than widened via ``extraPaths`` (widening was tried and made pyright treat
+the first-party ``vibesys`` package as an external stub-only dependency).
 """
 
 import json
@@ -233,7 +241,10 @@ def nsys_db(tmp_path):
 
 
 def test_analyze_kernels(nsys_db):
-    from resources.profilers.nsys.analyze_nsys import _build_string_map, analyze_kernels
+    from resources.profilers.nsys.analyze_nsys import (  # pyright: ignore[reportMissingImports]
+        _build_string_map,
+        analyze_kernels,
+    )
 
     conn = sqlite3.connect(nsys_db)
     strings = _build_string_map(conn)
@@ -247,7 +258,10 @@ def test_analyze_kernels(nsys_db):
 
 
 def test_analyze_cpu_overhead(nsys_db):
-    from resources.profilers.nsys.analyze_nsys import _build_string_map, analyze_cpu_overhead
+    from resources.profilers.nsys.analyze_nsys import (  # pyright: ignore[reportMissingImports]
+        _build_string_map,
+        analyze_cpu_overhead,
+    )
 
     conn = sqlite3.connect(nsys_db)
     strings = _build_string_map(conn)
@@ -261,7 +275,10 @@ def test_analyze_cpu_overhead(nsys_db):
 
 
 def test_analyze_gpu_idle_gaps(nsys_db):
-    from resources.profilers.nsys.analyze_nsys import _build_string_map, analyze_gpu_idle_gaps
+    from resources.profilers.nsys.analyze_nsys import (  # pyright: ignore[reportMissingImports]
+        _build_string_map,
+        analyze_gpu_idle_gaps,
+    )
 
     conn = sqlite3.connect(nsys_db)
     strings = _build_string_map(conn)
@@ -274,7 +291,9 @@ def test_analyze_gpu_idle_gaps(nsys_db):
 
 
 def test_analyze_memory_ops(nsys_db):
-    from resources.profilers.nsys.analyze_nsys import analyze_memory_ops
+    from resources.profilers.nsys.analyze_nsys import (  # pyright: ignore[reportMissingImports]
+        analyze_memory_ops,
+    )
 
     conn = sqlite3.connect(nsys_db)
     result = analyze_memory_ops(conn)
@@ -284,7 +303,9 @@ def test_analyze_memory_ops(nsys_db):
 
 
 def test_short_kernel_name():
-    from resources.profilers.nsys.analyze_nsys import _short_kernel_name
+    from resources.profilers.nsys.analyze_nsys import (  # pyright: ignore[reportMissingImports]
+        _short_kernel_name,
+    )
 
     assert (
         _short_kernel_name("void at::native::vectorized_elementwise_kernel<4, float>")
