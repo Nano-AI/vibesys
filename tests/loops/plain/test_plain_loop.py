@@ -133,7 +133,7 @@ def test_bootstrap_creates_initial_feature_issue_on_first_run(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -174,7 +174,7 @@ def test_bootstrap_idempotent_on_resume(
     )
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -195,7 +195,7 @@ def test_bootstrap_idempotent_on_resume(
     )
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name=exp_dir.name,
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -232,7 +232,7 @@ def test_judge_pass_closes_issue(mock_build_runner, mock_backend, mock_build, re
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -268,7 +268,7 @@ def test_judge_fail_increments_attempts_and_keeps_open(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -305,7 +305,7 @@ def test_issue_blocks_after_max_attempts_exhausted(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -386,7 +386,7 @@ def test_judge_invoke_receives_tracker_kwargs(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -445,7 +445,7 @@ def test_perf_eval_invoke_receives_tracker_kwargs(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -526,7 +526,7 @@ def test_judge_phase_calls_store_reload_after_invoke(
         ),
     ):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -567,7 +567,7 @@ def test_implementer_invoke_has_no_tracker_kwargs(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -620,7 +620,7 @@ def test_perf_eval_runs_after_drain_complete(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -669,7 +669,7 @@ def test_resume_with_bootstrap_done_skips_bootstrap_creation(
     )
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -688,7 +688,7 @@ def test_resume_with_bootstrap_done_skips_bootstrap_creation(
     mock_build_runner.return_value = runner2
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name=exp_dir.name,
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -731,7 +731,7 @@ def test_resume_retries_previously_blocked_issue(
     )
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result1 = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -743,8 +743,8 @@ def test_resume_retries_previously_blocked_issue(
 
     exp_dir = _run_exp_dir(tmp_path)
     pre_resume = IssueBoard(_store_path(exp_dir)).get(1)
-    assert pre_resume.status == IssueStatus.BLOCKED
-    assert pre_resume.attempts == 2
+    assert pre_resume.status == IssueStatus.BLOCKED  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
+    assert pre_resume.attempts == 2  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
 
     # Phase 2: resume. The blocked issue should be reopened with a fresh
     # attempt budget; this time the implementer/judge cycle passes.
@@ -758,7 +758,7 @@ def test_resume_retries_previously_blocked_issue(
     )
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result2 = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name=exp_dir.name,
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -771,11 +771,11 @@ def test_resume_retries_previously_blocked_issue(
     assert result2 is True
 
     post_resume = IssueBoard(_store_path(exp_dir)).get(1)
-    assert post_resume.status == IssueStatus.CLOSED
+    assert post_resume.status == IssueStatus.CLOSED  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
     # Reopen reset attempts to 0; the successful retry counts as attempt 1.
-    assert post_resume.attempts == 1
+    assert post_resume.attempts == 1  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
     # The blocked->open transition is recorded in history.
-    actions = [evt.action for evt in post_resume.history]
+    actions = [evt.action for evt in post_resume.history]  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
     assert "blocked->open" in actions
 
 
@@ -803,7 +803,7 @@ def test_run_returns_true_when_perf_eval_files_no_issues_after_clean_drain(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         result = run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -838,7 +838,7 @@ def test_state_json_written_with_bootstrap_done_after_run(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -882,7 +882,7 @@ def test_issue_loop_writes_per_issue_markdown_via_callback(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",
@@ -951,7 +951,7 @@ def test_implementer_retry_user_prompt_includes_prior_judge_feedback(
 
     with patch("vibesys.context.PROJECT_ROOT", tmp_path):
         run_plain_loop(
-            config={"model": {"name": "claude-sonnet-4-6"}},
+            config={"model": {"name": "claude-sonnet-4-6"}},  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="test",
             input_path=str(Path(ref_file).parent),
             accuracy_command="uv run python accuracy_checker/checker.py",

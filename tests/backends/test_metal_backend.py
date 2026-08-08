@@ -16,7 +16,7 @@ from vibesys.profilers import ProfilerKind
 
 
 def _make_backend(tmp_path) -> LocalBackend:
-    return backends.get(ComputeBackend.METAL, log_dir=tmp_path / "logs")
+    return backends.get(ComputeBackend.METAL, log_dir=tmp_path / "logs")  # pyright: ignore[reportReturnType]  # tracked: #297
 
 
 class TestMetalRegistry:

@@ -251,7 +251,7 @@ class TestMonitorLifecycle:
         mon.start()
         time.sleep(0.15)
         mon.stop()
-        assert not mon._thread.is_alive()
+        assert not mon._thread.is_alive()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
 
     def test_stop_without_start(self):
         mon = GpuContentionMonitor(log_dir=Path("/tmp"), gpu_uuid=GPU_A)
@@ -333,7 +333,9 @@ class TestReselectGpu:
     def test_noop_when_no_gpus(self, mock_pick, tmp_path):
         ctx = self._make_ctx(tmp_path, selected_gpu=_gpu(0, GPU_A))
         ctx.reselect_gpu()
-        assert ctx.selected_gpu.index == 0  # unchanged
+        # unchanged
+        selected_index = ctx.selected_gpu.index  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
+        assert selected_index == 0
 
     @patch("vibesys.backends.cuda.pick_gpu")
     def test_noop_when_same_gpu(self, mock_pick, tmp_path):
@@ -405,7 +407,7 @@ class TestReselectGpu:
         ctx.implementer_backend.start.assert_called_once()
         ctx.judge_backend.start.assert_called_once()
         # Clean up
-        ctx.gpu_monitor.stop()
+        ctx.gpu_monitor.stop()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
 
     # Note: symlink replay on restart is now the sandbox class's
     # responsibility (it runs setup_fns at the end of start()).  That
@@ -426,4 +428,4 @@ class TestReselectGpu:
         assert ctx.selected_gpu is gpu1
         assert ctx.implementer_backend._env["CUDA_VISIBLE_DEVICES"] == "1"
         # Clean up
-        ctx.gpu_monitor.stop()
+        ctx.gpu_monitor.stop()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297

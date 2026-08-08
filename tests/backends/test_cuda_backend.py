@@ -23,5 +23,5 @@ def test_cpu_only_control_plane_docker_skips_gpu_runtime(
     )
 
     pick_device.assert_not_called()
-    assert sandbox._gpus is None  # pyright: ignore[reportAttributeAccessIssue]
+    assert sandbox._gpus is None
     assert backend.selected_device is None

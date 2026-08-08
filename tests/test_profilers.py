@@ -77,7 +77,7 @@ def _expected_resolved(
     )
     if candidate not in allowed:
         raise ValueError
-    return candidate
+    return candidate  # pyright: ignore[reportReturnType]  # tracked: #297
 
 
 @pytest.mark.parametrize("domain", _DOMAINS)

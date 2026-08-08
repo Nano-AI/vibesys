@@ -107,11 +107,11 @@ def test_benchmark_reports_requested_and_observed_concurrency(monkeypatch):
         temperature,
         concurrency_stats=None,
     ):
-        concurrency_stats.request_started()
-        concurrency_stats.stream_opened()
+        concurrency_stats.request_started()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
+        concurrency_stats.stream_opened()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
         await asyncio.sleep(0)
-        concurrency_stats.stream_closed()
-        concurrency_stats.request_finished()
+        concurrency_stats.stream_closed()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
+        concurrency_stats.request_finished()  # pyright: ignore[reportOptionalMemberAccess]  # tracked: #297
         return {
             "error": None,
             "output_tokens": 2,

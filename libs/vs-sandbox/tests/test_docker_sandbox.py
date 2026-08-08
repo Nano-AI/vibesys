@@ -324,7 +324,7 @@ class TestSetupFns:
         s = DockerSandbox(
             host_workspace=str(tmp_path / "workspace"),
             image="nvcr.io/nvidia/pytorch:25.04-py3",
-            setup_fns=[fn],
+            setup_fns=[fn],  # pyright: ignore[reportArgumentType]  # tracked: #297
         )
         s.start()
         assert invocations == [s]
@@ -347,7 +347,7 @@ class TestSetupFns:
         s = DockerSandbox(
             host_workspace=str(tmp_path / "workspace"),
             image="nvcr.io/nvidia/pytorch:25.04-py3",
-            setup_fns=[fn],
+            setup_fns=[fn],  # pyright: ignore[reportArgumentType]  # tracked: #297
         )
         s.start()
         s.start()
@@ -373,7 +373,7 @@ class TestSetupFns:
         sandbox = DockerSandbox(
             host_workspace=str(tmp_path / "workspace"),
             image="test-image",
-            setup_fns=[fail_setup],
+            setup_fns=[fail_setup],  # pyright: ignore[reportArgumentType]  # tracked: #297
         )
 
         try:
@@ -415,7 +415,7 @@ class TestSetupFns:
         sandbox = DockerSandbox(
             host_workspace=str(tmp_path / "workspace"),
             image="test-image",
-            setup_fns=[fail_setup],
+            setup_fns=[fail_setup],  # pyright: ignore[reportArgumentType]  # tracked: #297
         )
 
         try:

@@ -38,7 +38,7 @@ def test_cli_exposes_only_process_boundary_modes():
 
     parser = _build_agent_parser()
     action = next(action for action in parser._actions if action.dest == "interface")
-    assert set(action.choices) == {"inprocess", "service"}
+    assert set(action.choices) == {"inprocess", "service"}  # pyright: ignore[reportArgumentType]  # tracked: #297
     assert action.default == "inprocess"
     assert all(action.dest != "language" for action in parser._actions)
 
@@ -71,7 +71,7 @@ def test_loop_constants_and_rejects_unknown_interface():
     assert _INTERFACES == ("inprocess", "service")
     with pytest.raises(ValueError, match="interface"):
         run_agent_loop(
-            config=None,
+            config=None,  # pyright: ignore[reportArgumentType]  # tracked: #297
             exp_name="e",
             input_path="/x",
             accuracy_command="accuracy-checker",
@@ -116,7 +116,7 @@ def test_standalone_profiler_rejects_unknown_kind():
     from vibesys.loops.agent.loop import _profiler_prompt_template
 
     with pytest.raises(TypeError, match="ProfilerKind"):
-        _profiler_prompt_template("bogus")
+        _profiler_prompt_template("bogus")  # pyright: ignore[reportArgumentType]  # tracked: #297
 
 
 def _render_implementer(interface: str, *, modality: str | None = None) -> str:
