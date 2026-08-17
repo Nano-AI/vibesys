@@ -1800,7 +1800,8 @@ def test_implementer_skill_updates_survive_a_renewed_continuation_prompt(tmp_pat
     plan_path = calls[1].kwargs["workspace"] / "progress-artifacts" / "plans" / "round-0002.json"
     persisted = OrchestratorPlan.model_validate_json(plan_path.read_text())
     assert persisted.recommended_skills == [selection]
-    assert runner.counters["prof"] == 0
+    # Only the cold-start baseline profile; no pre-round decision asked for more.
+    assert runner.counters["prof"] == 1
 
 
 def test_loop_judge_retry_then_pass(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
@@ -2813,7 +2814,7 @@ def test_loop_orchestrator_requests_profile_before_plan(tmp_path, ref_file):  # 
             PreRoundDecision(need_profile=True, profile_focus="kernels", reasoning="need data"),
         ],
         plans=[
-            # Round 1 cold-start plan (no pre-decision invoked on round 1).
+            # Round 1 cold-start plan (baseline profile, no pre-decision).
             OrchestratorPlan(
                 task="Build server",
                 pass_criteria="ok",  # noqa: S106  # tracked: #288
@@ -2853,18 +2854,19 @@ def test_loop_orchestrator_requests_profile_before_plan(tmp_path, ref_file):  # 
 
     result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=2)
     assert result is True
-    # Round 1 cold-start: no pre → just plan.
+    # Round 1 cold-start: profiler (unconditional baseline) → plan, no pre.
     # Round 2: pre → profiler → plan.
-    assert call_order[:1] == ["plan"]
-    assert "profiler" in call_order
+    assert call_order == ["profiler", "plan", "pre", "profiler", "plan"]
     plan_idx = [i for i, c in enumerate(call_order) if c == "plan"]
-    prof_idx = call_order.index("profiler")
-    # Profiler must come BEFORE the round-2 plan call.
-    assert prof_idx < plan_idx[1]
-    assert "Recent campaign context" in profiler_prompts[0]
-    assert "The durable progress artifact is `progress.md`" in profiler_prompts[0]
-    assert "Round 1" not in profiler_prompts[0]
-    assert "Do not launch a duplicate expensive evaluation" in profiler_prompts[0]
+    prof_idx = [i for i, c in enumerate(call_order) if c == "profiler"]
+    # Each round's profiler must come BEFORE that round's plan call.
+    assert prof_idx[0] < plan_idx[0]
+    assert prof_idx[1] < plan_idx[1]
+    for prompt in profiler_prompts:
+        assert "Recent campaign context" in prompt
+        assert "The durable progress artifact is `progress.md`" in prompt
+        assert "Round 1" not in prompt
+        assert "Do not launch a duplicate expensive evaluation" in prompt
 
 
 def test_loop_skips_profiler_when_pre_round_decision_says_no(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
@@ -2882,7 +2884,58 @@ def test_loop_skips_profiler_when_pre_round_decision_says_no(tmp_path, ref_file)
 
     assert result is True
     assert runner.counters["orch_pre"] == 1
-    assert runner.counters["prof"] == 0
+    # The round-1 baseline still runs; round 2 declined, so it stops at one.
+    assert runner.counters["prof"] == 1
+
+
+def test_loop_profiles_the_cold_start_before_its_first_plan(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """Round 1 profiles unconditionally so the first plan is not chosen blind.
+
+    A fresh cold start has no prior round, so no pre-round decision runs and
+    nothing can request a profile. Without an unconditional baseline the first
+    optimization would be selected from the objective text alone.
+    """
+    call_order: list[str] = []
+    plan_prompts: list[str] = []
+    runner = _make_orchestrate_runner(
+        plans=[
+            OrchestratorPlan(
+                task="Cut the measured hotspot",
+                pass_criteria="ok",  # noqa: S106  # tracked: #288
+                reasoning="baseline profile named it",
+            ),
+        ],
+        profiler_responses=[
+            ProfilerSummary(
+                analysis="decode is launch-bound",
+                bottlenecks="host-side sync",
+                suggestions="cuda graph",
+                perf_metric=5.0,
+                perf_unit="req/s",
+            ),
+        ],
+    )
+    real_invoke = runner.invoke.side_effect
+
+    def spy_invoke(*, kind, response_cls, **kwargs):  # noqa: ANN001, ANN003, ANN202  # tracked: #288
+        if kind == "profiler":
+            call_order.append("profiler")
+        elif kind == "orchestrator" and response_cls is OrchestratorPlan:
+            call_order.append("plan")
+            plan_prompts.append(kwargs.get("system_prompt", ""))
+        elif kind == "orchestrator" and response_cls is PreRoundDecision:
+            call_order.append("pre")
+        return real_invoke(kind=kind, response_cls=response_cls, **kwargs)
+
+    runner.invoke.side_effect = spy_invoke
+
+    result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=1)
+
+    assert result is True
+    assert call_order == ["profiler", "plan"]
+    assert runner.counters["orch_pre"] == 0
+    # The baseline must reach the planner, not merely have been collected.
+    assert "The fresh profiler result is recorded" in plan_prompts[0]
 
 
 def test_loop_skips_profiler_when_profiler_kind_is_none(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
@@ -2945,7 +2998,8 @@ def test_loop_generic_auto_profiler_resolves_to_macos_cpu(tmp_path, ref_file):  
 
     assert result is True
     assert runner.counters["orch_pre"] == 1
-    assert runner.counters["prof"] == 1
+    # Round-1 baseline plus the round-2 profile the pre-round decision asked for.
+    assert runner.counters["prof"] == 2
 
 
 def test_loop_runs_full_max_rounds_budget(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288

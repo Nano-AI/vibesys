@@ -733,6 +733,12 @@ def _is_fresh_cold_start(round_number: int, records: list[RoundRecord]) -> bool:
     return round_number == 1 and not records
 
 
+# The focus a round asks for when nothing more specific has been established:
+# a cold start has no hypothesis to narrow it, and a pre-round decision may
+# request a profile without naming one.
+DEFAULT_PROFILE_FOCUS = "general steady-state benchmark hotspots"
+
+
 def _run_pre_round_decision(  # noqa: PLR0913  # tracked: #288
     ctx: LoopContext,
     *,
@@ -2181,7 +2187,26 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                 pre_decision: PreRoundDecision | None = None
                 if active_hypothesis is None:
                     if inner_loop == "multi-agent":
-                        if not _is_fresh_cold_start(round_number, records):
+                        if _is_fresh_cold_start(round_number, records):
+                            # A cold start has no prior round to reason about,
+                            # so there is no pre-round decision to make. It is
+                            # also the round holding the least evidence, so an
+                            # attached profiler runs unconditionally: the first
+                            # plan is then chosen from measurement instead of
+                            # from the objective text alone. ``evolve`` profiles
+                            # its generation-0 seed for the same reason.
+                            if ctx.profiler_kind is not ProfilerKind.NONE:
+                                profiler_summary = _run_profiler(
+                                    ctx,
+                                    round_number=round_number,
+                                    profile_focus=DEFAULT_PROFILE_FOCUS,
+                                    modality=modality,
+                                    interface=interface,
+                                    domain_definition=domain_definition,
+                                    progress_path=progress_path,
+                                    objective=objective,
+                                )
+                        else:
                             pre_decision = _run_pre_round_decision(
                                 ctx,
                                 round_number=round_number,
@@ -2198,7 +2223,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                                     ctx,
                                     round_number=round_number,
                                     profile_focus=pre_decision.profile_focus
-                                    or "general steady-state benchmark hotspots",
+                                    or DEFAULT_PROFILE_FOCUS,
                                     modality=modality,
                                     interface=interface,
                                     domain_definition=domain_definition,
