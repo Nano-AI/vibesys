@@ -20,9 +20,8 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Each target defines its own implementation contract, correctness checks,
-        and performance benchmark, so VibeSys works across domains instead of
-        assuming one runtime, language, or deployment shape.
+        Each target gets its own contract, checks, and benchmark, not a
+        fixed runtime, language, or deployment shape
       </>
     ),
   },
@@ -36,14 +35,13 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        An outer loop plans the search over designs; an inner loop implements and
-        validates candidates. An independent judge checks correctness and
-        reward-hacking risk before results are recorded.
+        An outer loop searches over designs while an inner loop implements,
+        validates, and judges each candidate
       </>
     ),
   },
   {
-    title: 'Extend with skills, not forks',
+    title: 'Extend with skills',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="4" y="4" width="7" height="7" rx="1" />
@@ -54,9 +52,8 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        New model families, hardware platforms, and optimizations are added by
-        writing an Agent Skill distilled from real serving engines and research,
-        not by modifying the framework.
+        New model families, hardware, and optimizations arrive as Agent
+        Skills, not framework changes
       </>
     ),
   },
