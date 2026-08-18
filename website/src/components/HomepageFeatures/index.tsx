@@ -5,14 +5,19 @@ import styles from './styles.module.css';
 
 type FeatureItem = {
   title: string;
-  icon: string;
+  icon: ReactNode;
   description: ReactNode;
 };
 
 const FeatureList: FeatureItem[] = [
   {
     title: 'Bespoke by target',
-    icon: '🎯',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="7" />
+        <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      </svg>
+    ),
     description: (
       <>
         Each target defines its own implementation contract, correctness checks,
@@ -23,7 +28,12 @@ const FeatureList: FeatureItem[] = [
   },
   {
     title: 'Multi-agent optimization loop',
-    icon: '🔁',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M4 12a8 8 0 0 1 14-5M20 12a8 8 0 0 1-14 5" />
+        <path d="M18 4v3h-3M6 20v-3h3" />
+      </svg>
+    ),
     description: (
       <>
         An outer loop plans the search over designs; an inner loop implements and
@@ -34,7 +44,14 @@ const FeatureList: FeatureItem[] = [
   },
   {
     title: 'Extend with skills, not forks',
-    icon: '🧩',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="4" y="4" width="7" height="7" rx="1" />
+        <rect x="13" y="4" width="7" height="7" rx="1" />
+        <rect x="4" y="13" width="7" height="7" rx="1" />
+        <rect x="13" y="13" width="7" height="7" rx="1" />
+      </svg>
+    ),
     description: (
       <>
         New model families, hardware platforms, and optimizations are added by
@@ -49,7 +66,7 @@ function Feature({title, icon, description}: FeatureItem) {
   return (
     <div className={clsx('col col--4')}>
       <div className="text--center">
-        <span className={styles.featureIcon} role="img" aria-hidden="true">
+        <span className={styles.featureIcon} aria-hidden="true">
           {icon}
         </span>
       </div>

@@ -12,9 +12,10 @@ import styles from './index.module.css';
 function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
   return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
+    <header className={clsx('hero', styles.heroBanner)}>
       <div className="container">
         <Heading as="h1" className="hero__title">
+          <span className={styles.promptMark}>&gt;</span>
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
@@ -25,12 +26,12 @@ function HomepageHeader() {
         </p>
         <div className={styles.buttons}>
           <Link
-            className="button button--secondary button--lg"
+            className="button button--primary button--lg"
             to="/docs/running-vibesys">
             Read the docs
           </Link>
           <Link
-            className="button button--outline button--secondary button--lg"
+            className="button button--outline button--primary button--lg"
             href="https://arxiv.org/abs/2605.06068">
             Paper (arXiv)
           </Link>
