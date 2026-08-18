@@ -733,6 +733,92 @@ def _is_fresh_cold_start(round_number: int, records: list[RoundRecord]) -> bool:
     return round_number == 1 and not records
 
 
+# The focus a round asks for when nothing more specific has been established:
+# a cold start has no hypothesis to narrow it, and a pre-round decision may
+# request a profile without naming one.
+DEFAULT_PROFILE_FOCUS = "general steady-state benchmark hotspots"
+
+# Labels the cold-start probe's benchmark entry in the progress artifact. It
+# precedes any implementation, so numbering it as a judge retry would misread.
+_COLD_START_BASELINE_LABEL = "cold-start baseline"
+
+
+@dataclass(frozen=True)
+class ColdStartBaseline:
+    """Whether round 1's workspace runs, measured rather than inferred.
+
+    Rounds 2+ learn this from the previous round's record. Round 1 has none,
+    so the pre-round decision would otherwise guess at whether the candidate
+    can be profiled at all.
+    """
+
+    runnable: bool
+    metric_name: str
+    metric_value: float | None
+    detail: str
+
+
+def _run_cold_start_baseline(
+    ctx: LoopContext,
+    *,
+    benchmark_result: BenchmarkResult | None,
+    round_number: int,
+    progress_path: Path,
+    timeout_seconds: int | None,
+) -> ColdStartBaseline | None:
+    """Run the declared benchmark once, before round 1's first decision.
+
+    The benchmark command is the same one every later round is graded by, so
+    its exit code is ground truth about whether the candidate builds and runs.
+    Every other available signal (a pinned seed checkout, a declared result
+    contract, the objective text) describes intent rather than the state of
+    this workspace in this environment.
+
+    Returns ``None`` when no baseline can be established, which is not the
+    same as a failed one: the caller must not read absence as "does not run".
+    """
+    if ctx.agent_runner.backend_name == "stub":
+        return None
+    if benchmark_result is None or not ctx.judge_benchmark_command:
+        return None
+
+    ctx.lprint("[cold-start-baseline] establishing whether the candidate runs")
+    feedback, metric_value = _run_framework_benchmark(
+        ctx,
+        result_spec=benchmark_result,
+        round_number=round_number,
+        retry=0,
+        progress_path=progress_path,
+        timeout_seconds=timeout_seconds,
+        attempt_label=_COLD_START_BASELINE_LABEL,
+    )
+    runnable = feedback is None
+    detail = (
+        f"The declared benchmark completed and reported {benchmark_result.metric}={metric_value}."
+        if runnable
+        else (feedback or "").strip()[-2000:]
+    )
+    baseline = ColdStartBaseline(
+        runnable=runnable,
+        metric_name=benchmark_result.metric,
+        metric_value=metric_value,
+        detail=detail,
+    )
+    issue_board.append_cold_start_baseline(
+        progress_path,
+        round_number,
+        runnable=baseline.runnable,
+        metric_name=baseline.metric_name,
+        metric_value=baseline.metric_value,
+        detail=baseline.detail,
+    )
+    ctx.lprint(
+        f"[cold-start-baseline] {'runnable' if runnable else 'not runnable'}"
+        f"{f': {benchmark_result.metric}={metric_value}' if runnable else ''}"
+    )
+    return baseline
+
+
 def _run_pre_round_decision(  # noqa: PLR0913  # tracked: #288
     ctx: LoopContext,
     *,
@@ -741,6 +827,8 @@ def _run_pre_round_decision(  # noqa: PLR0913  # tracked: #288
     carry: _CarryOver,
     progress_path: Path,
     progress_location: str,
+    has_history: bool = True,
+    cold_start_baseline: ColdStartBaseline | None = None,
 ) -> PreRoundDecision:
     system_prompt = render_template(
         "orchestrator_pre_round_prompt.j2",
@@ -752,6 +840,13 @@ def _run_pre_round_decision(  # noqa: PLR0913  # tracked: #288
         progress_location=progress_location,
         profiler_kind=ctx.profiler_kind.value,
         profile_execution=ctx.run_environment_view.profile_execution,
+        has_history=has_history,
+        baseline_runnable=(None if cold_start_baseline is None else cold_start_baseline.runnable),
+        baseline_metric=(
+            None
+            if cold_start_baseline is None or cold_start_baseline.metric_value is None
+            else f"{cold_start_baseline.metric_name}={cold_start_baseline.metric_value}"
+        ),
     )
     decision = _invoke_read_only_role(
         ctx,
@@ -1791,6 +1886,7 @@ def _run_framework_benchmark(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracke
     progress_path: Path,
     timeout_seconds: int | None = None,
     candidate_revision: str | None = None,
+    attempt_label: str | None = None,
 ) -> tuple[str | None, float | None]:
     """Run and parse an opt-in trusted benchmark result contract."""
     if result_spec is None:
@@ -1886,6 +1982,7 @@ def _run_framework_benchmark(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracke
         metric_name=result_spec.metric,
         metric_value=metric_value,
         output=output[-8000:],
+        attempt_label=attempt_label,
     )
     ctx.snapshot_workspace(f"round-{round_number}-retry-{retry}-framework-benchmark")
     if passed:
@@ -2181,30 +2278,44 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                 pre_decision: PreRoundDecision | None = None
                 if active_hypothesis is None:
                     if inner_loop == "multi-agent":
-                        if not _is_fresh_cold_start(round_number, records):
-                            pre_decision = _run_pre_round_decision(
+                        # Round 1 used to skip this decision outright, which
+                        # also skipped the profiler nested under it: the round
+                        # holding the least evidence was the one round where
+                        # nothing could ask for measurement. It now decides
+                        # like every other round. What it lacks is a prior
+                        # record telling it whether the candidate runs, so a
+                        # cold start measures that first instead of guessing.
+                        cold_start = _is_fresh_cold_start(round_number, records)
+                        cold_start_baseline: ColdStartBaseline | None = None
+                        if cold_start and ctx.profiler_kind is not ProfilerKind.NONE:
+                            cold_start_baseline = _run_cold_start_baseline(
+                                ctx,
+                                benchmark_result=benchmark_result,
+                                round_number=round_number,
+                                progress_path=progress_path,
+                                timeout_seconds=benchmark_timeout_seconds,
+                            )
+                        pre_decision = _run_pre_round_decision(
+                            ctx,
+                            round_number=round_number,
+                            objective=objective,
+                            carry=carry,
+                            progress_path=progress_path,
+                            progress_location=progress_location,
+                            has_history=not cold_start,
+                            cold_start_baseline=cold_start_baseline,
+                        )
+                        if pre_decision.need_profile and ctx.profiler_kind is not ProfilerKind.NONE:
+                            profiler_summary = _run_profiler(
                                 ctx,
                                 round_number=round_number,
-                                objective=objective,
-                                carry=carry,
+                                profile_focus=pre_decision.profile_focus or DEFAULT_PROFILE_FOCUS,
+                                modality=modality,
+                                interface=interface,
+                                domain_definition=domain_definition,
                                 progress_path=progress_path,
-                                progress_location=progress_location,
+                                objective=objective,
                             )
-                            if (
-                                pre_decision.need_profile
-                                and ctx.profiler_kind is not ProfilerKind.NONE
-                            ):
-                                profiler_summary = _run_profiler(
-                                    ctx,
-                                    round_number=round_number,
-                                    profile_focus=pre_decision.profile_focus
-                                    or "general steady-state benchmark hotspots",
-                                    modality=modality,
-                                    interface=interface,
-                                    domain_definition=domain_definition,
-                                    progress_path=progress_path,
-                                    objective=objective,
-                                )
                     elif last_single_agent_response is not None:
                         profiler_summary = _profiler_summary_from_single_agent(
                             last_single_agent_response

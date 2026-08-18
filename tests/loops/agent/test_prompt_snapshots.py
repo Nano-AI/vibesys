@@ -511,6 +511,66 @@ def test_pre_round_prompt_disables_none_profiler_without_fake_capture_path():  #
     assert "`remote` capture path" not in rendered
 
 
+def _pre_round(**overrides: object) -> str:
+    context: dict[str, object] = {
+        "objective_location": "OBJECTIVE.md",
+        "progress_location": "progress.md",
+        "profiler_kind": "otel",
+        "profile_execution": "local",
+    }
+    context.update(overrides)
+    return render_template(
+        "orchestrator_pre_round_prompt.j2", template_dir=_TEMPLATE_DIR, **context
+    )
+
+
+def test_pre_round_prompt_defaults_to_the_campaign_history_reading():  # noqa: ANN201  # tracked: #288
+    """Omitting ``has_history`` must not silently render round 1's text."""
+    rendered = _pre_round()
+
+    assert "latest relevant entry under `progress.md`" in rendered
+    assert "This is\nround 1" not in rendered
+    assert "Profiling measures a running system" not in rendered
+
+
+def test_pre_round_prompt_does_not_send_round_one_after_absent_history():  # noqa: ANN201  # tracked: #288
+    rendered = _pre_round(has_history=False)
+
+    assert "This is\nround 1" in rendered
+    assert "latest relevant entry under" not in rendered
+    assert "Profiling measures a running system" in rendered
+
+
+def test_pre_round_prompt_reports_a_runnable_cold_start_baseline():  # noqa: ANN201  # tracked: #288
+    rendered = _pre_round(
+        has_history=False,
+        baseline_runnable=True,
+        baseline_metric="primary_value=41.5",
+    )
+
+    assert "It reported `primary_value=41.5`." in rendered
+    assert "The candidate builds and runs, so profiling is possible" in rendered
+    assert "Set `need_profile=false`" not in rendered
+
+
+def test_pre_round_prompt_forbids_profiling_a_cold_start_that_does_not_run():  # noqa: ANN201  # tracked: #288
+    rendered = _pre_round(has_history=False, baseline_runnable=False)
+
+    assert "it did not complete" in rendered
+    assert "Set `need_profile=false`" in rendered
+    assert "builds and runs" not in rendered
+
+
+def test_pre_round_prompt_treats_an_absent_baseline_as_unverified():  # noqa: ANN201  # tracked: #288
+    """No baseline is not evidence of failure, but it does not license a profile."""
+    rendered = _pre_round(has_history=False)
+
+    assert "unverified" in rendered
+    assert "is not evidence that it fails" in rendered
+    assert "prefer\n`need_profile=false`" in rendered
+    assert "it did not complete" not in rendered
+
+
 def test_official_evaluation_due_changes_agent_measurement_contract():  # noqa: ANN201  # tracked: #288
     context = _CONTEXTS["full"] | {
         "official_evaluation_due": True,

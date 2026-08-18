@@ -402,6 +402,26 @@ def append_pre_round_decision(  # noqa: D103  # tracked: #288
     _append(progress_path, block, round_number)
 
 
+def append_cold_start_baseline(  # noqa: D103, PLR0913  # tracked: #288
+    progress_path: Path,
+    round_number: int,
+    *,
+    runnable: bool,
+    metric_name: str,
+    metric_value: float | None,
+    detail: str,
+) -> None:
+    verdict = "runnable" if runnable else "not runnable"
+    metric_line = f"- **{metric_name}**: {metric_value}\n" if metric_value is not None else ""
+    block = (
+        f"## Round {round_number} — Cold-start baseline\n"
+        f"- **verdict**: {verdict}\n"
+        f"{metric_line}\n"
+        f"### Detail\n{detail or '(no detail)'}\n"
+    )
+    _append(progress_path, block, round_number)
+
+
 def append_profiler_summary(  # noqa: D103  # tracked: #288
     progress_path: Path, round_number: int, summary: ProfilerSummary
 ) -> None:
@@ -633,11 +653,13 @@ def append_framework_benchmark(  # noqa: D103, PLR0913  # tracked: #288
     metric_name: str,
     metric_value: float | None,
     output: str,
+    attempt_label: str | None = None,
 ) -> None:
     verdict = "pass" if passed else "fail"
     metric_line = f"- **{metric_name}**: {metric_value}\n" if metric_value is not None else ""
+    attempt = attempt_label or f"attempt {retry}"
     block = (
-        f"## Round {round_number} — Framework benchmark (attempt {retry})\n"
+        f"## Round {round_number} — Framework benchmark ({attempt})\n"
         f"- **verdict**: {verdict}\n"
         f"- **command**: `{command}`\n"
         f"{metric_line}\n"

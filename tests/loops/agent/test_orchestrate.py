@@ -2810,10 +2810,11 @@ def test_loop_orchestrator_requests_profile_before_plan(tmp_path, ref_file):  # 
     profiler_prompts: list[str] = []
     runner = _make_orchestrate_runner(
         pre_decisions=[
+            PreRoundDecision(need_profile=False, profile_focus="", reasoning="read the source"),
             PreRoundDecision(need_profile=True, profile_focus="kernels", reasoning="need data"),
         ],
         plans=[
-            # Round 1 cold-start plan (no pre-decision invoked on round 1).
+            # Round 1 plan: its pre-decision declined, so no profile precedes it.
             OrchestratorPlan(
                 task="Build server",
                 pass_criteria="ok",  # noqa: S106  # tracked: #288
@@ -2853,10 +2854,8 @@ def test_loop_orchestrator_requests_profile_before_plan(tmp_path, ref_file):  # 
 
     result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=2)
     assert result is True
-    # Round 1 cold-start: no pre → just plan.
-    # Round 2: pre → profiler → plan.
-    assert call_order[:1] == ["plan"]
-    assert "profiler" in call_order
+    # Round 1: pre declined → just plan. Round 2: pre → profiler → plan.
+    assert call_order == ["pre", "plan", "pre", "profiler", "plan"]
     plan_idx = [i for i, c in enumerate(call_order) if c == "plan"]
     prof_idx = call_order.index("profiler")
     # Profiler must come BEFORE the round-2 plan call.
@@ -2881,7 +2880,8 @@ def test_loop_skips_profiler_when_pre_round_decision_says_no(tmp_path, ref_file)
     result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=2)
 
     assert result is True
-    assert runner.counters["orch_pre"] == 1
+    # Both rounds decide, including round 1; neither asked for a profile.
+    assert runner.counters["orch_pre"] == 2
     assert runner.counters["prof"] == 0
 
 
@@ -2909,7 +2909,7 @@ def test_loop_skips_profiler_when_profiler_kind_is_none(tmp_path, ref_file):  # 
     )
 
     assert result is True
-    assert runner.counters["orch_pre"] == 1
+    assert runner.counters["orch_pre"] == 2
     assert runner.counters["prof"] == 0
 
 
@@ -2944,8 +2944,305 @@ def test_loop_generic_auto_profiler_resolves_to_macos_cpu(tmp_path, ref_file):  
         )
 
     assert result is True
-    assert runner.counters["orch_pre"] == 1
+    assert runner.counters["orch_pre"] == 2
     assert runner.counters["prof"] == 1
+
+
+def test_loop_asks_whether_to_profile_before_the_first_plan(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """Round 1 routes through the same pre-round decision as every other round.
+
+    It used to skip that decision outright, which also skipped the profiler
+    nested under it: the round holding the least evidence was the one round
+    where nothing could ask for measurement.
+    """
+    call_order: list[str] = []
+    plan_prompts: list[str] = []
+    runner = _make_orchestrate_runner(
+        pre_decisions=[
+            PreRoundDecision(need_profile=True, profile_focus="decode", reasoning="no evidence"),
+        ],
+        plans=[
+            OrchestratorPlan(
+                task="Cut the measured hotspot",
+                pass_criteria="ok",  # noqa: S106  # tracked: #288
+                reasoning="the baseline profile named it",
+            ),
+        ],
+        profiler_responses=[
+            ProfilerSummary(
+                analysis="decode is launch-bound",
+                bottlenecks="host-side sync",
+                suggestions="cuda graph",
+                perf_metric=5.0,
+                perf_unit="req/s",
+            ),
+        ],
+    )
+    real_invoke = runner.invoke.side_effect
+
+    def spy_invoke(*, kind, response_cls, **kwargs):  # noqa: ANN001, ANN003, ANN202  # tracked: #288
+        if kind == "profiler":
+            call_order.append("profiler")
+        elif kind == "orchestrator" and response_cls is OrchestratorPlan:
+            call_order.append("plan")
+            plan_prompts.append(kwargs.get("system_prompt", ""))
+        elif kind == "orchestrator" and response_cls is PreRoundDecision:
+            call_order.append("pre")
+        return real_invoke(kind=kind, response_cls=response_cls, **kwargs)
+
+    runner.invoke.side_effect = spy_invoke
+
+    result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=1)
+
+    assert result is True
+    # The decision precedes the profiler, which precedes the plan it informs.
+    assert call_order == ["pre", "profiler", "plan"]
+    # The measurement reaches the planner rather than merely being collected.
+    # The plan prompt is path-only, so it names the evidence instead of
+    # embedding it; that section renders only when a summary was threaded in.
+    assert "The fresh profiler result is recorded" in plan_prompts[0]
+
+
+def test_loop_first_round_profiles_only_when_its_decision_asks(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """A round-1 decline costs no profiler turn.
+
+    A campaign that builds from scratch has nothing to profile yet. The
+    decision is what keeps that run from spending the turn, so a declined
+    round 1 must reach its plan with no profiler call at all.
+    """
+    runner = _make_orchestrate_runner(
+        pre_decisions=[
+            PreRoundDecision(
+                need_profile=False,
+                profile_focus="",
+                reasoning="nothing runs yet; round 1 must make it build",
+            ),
+        ],
+        plans=[
+            OrchestratorPlan(
+                task="Make the service build",
+                pass_criteria="compiles",  # noqa: S106  # tracked: #288
+                reasoning="no measurable system yet",
+            ),
+        ],
+    )
+
+    result = _invoke_orchestrate(tmp_path, ref_file, runner, max_rounds=1)
+
+    assert result is True
+    assert runner.counters["orch_pre"] == 1
+    assert runner.counters["prof"] == 0
+
+
+def test_cold_start_baseline_reports_a_runnable_candidate(tmp_path):  # noqa: ANN001, ANN201  # tracked: #288
+    from vibesys.input_manifest import BenchmarkResult  # noqa: PLC0415  # tracked: #288
+    from vibesys.loops.agent.loop import _run_cold_start_baseline  # noqa: PLC0415  # tracked: #288
+
+    ctx = MagicMock()
+    ctx.agent_runner.backend_name = "deepagents"
+    ctx.judge_benchmark_command = "trusted-benchmark"
+    progress = tmp_path / "progress.md"
+
+    with patch(
+        "vibesys.loops.agent.loop._run_framework_benchmark",
+        return_value=(None, 41.5),
+    ) as benchmark:
+        baseline = _run_cold_start_baseline(
+            ctx,
+            benchmark_result=BenchmarkResult(json_argument="--json", metric="primary_value"),
+            round_number=1,
+            progress_path=progress,
+            timeout_seconds=300,
+        )
+
+    assert baseline is not None
+    assert baseline.runnable is True
+    assert baseline.metric_value == 41.5
+    assert baseline.metric_name == "primary_value"
+    # The probe is labelled, not numbered as a judge retry: it precedes any
+    # implementation, so "attempt 0" would misread the progress artifact.
+    assert benchmark.call_args.kwargs["attempt_label"] == "cold-start baseline"
+    assert "Cold-start baseline" in progress.read_text()
+    assert "runnable" in progress.read_text()
+
+
+def test_cold_start_baseline_reports_a_candidate_that_does_not_run(tmp_path):  # noqa: ANN001, ANN201  # tracked: #288
+    from vibesys.input_manifest import BenchmarkResult  # noqa: PLC0415  # tracked: #288
+    from vibesys.loops.agent.loop import _run_cold_start_baseline  # noqa: PLC0415  # tracked: #288
+
+    ctx = MagicMock()
+    ctx.agent_runner.backend_name = "deepagents"
+    ctx.judge_benchmark_command = "trusted-benchmark"
+    progress = tmp_path / "progress.md"
+
+    with patch(
+        "vibesys.loops.agent.loop._run_framework_benchmark",
+        return_value=("Framework benchmark failed.\ngo: cannot find module", None),
+    ):
+        baseline = _run_cold_start_baseline(
+            ctx,
+            benchmark_result=BenchmarkResult(json_argument="--json", metric="primary_value"),
+            round_number=1,
+            progress_path=progress,
+            timeout_seconds=300,
+        )
+
+    assert baseline is not None
+    assert baseline.runnable is False
+    assert baseline.metric_value is None
+    assert "cannot find module" in baseline.detail
+    assert "not runnable" in progress.read_text()
+
+
+def test_cold_start_baseline_absent_is_not_evidence_that_nothing_runs(tmp_path):  # noqa: ANN001, ANN201  # tracked: #288
+    """No declared result contract yields no baseline, not a failed one."""
+    from vibesys.loops.agent.loop import _run_cold_start_baseline  # noqa: PLC0415  # tracked: #288
+
+    ctx = MagicMock()
+    ctx.agent_runner.backend_name = "deepagents"
+    ctx.judge_benchmark_command = "trusted-benchmark"
+
+    assert (
+        _run_cold_start_baseline(
+            ctx,
+            benchmark_result=None,
+            round_number=1,
+            progress_path=tmp_path / "progress.md",
+            timeout_seconds=300,
+        )
+        is None
+    )
+
+
+def test_cold_start_baseline_reaches_the_first_pre_round_decision(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """The measured verdict is what the round-1 decision reasons from.
+
+    Rounds 2+ read whether the candidate runs from the previous round's
+    record. Round 1 has none, so the benchmark's exit code stands in for it.
+    """
+    from vibesys.input_manifest import BenchmarkResult  # noqa: PLC0415  # tracked: #288
+
+    pre_prompts: list[str] = []
+    runner = _make_orchestrate_runner(
+        pre_decisions=[
+            PreRoundDecision(need_profile=True, profile_focus="decode", reasoning="it runs"),
+        ],
+        plans=[
+            OrchestratorPlan(task="Optimize", pass_criteria="ok", reasoning="measured"),  # noqa: S106  # tracked: #288
+        ],
+        profiler_responses=[
+            ProfilerSummary(
+                analysis="decode is launch-bound",
+                bottlenecks="sync",
+                suggestions="graph",
+                perf_metric=5.0,
+                perf_unit="req/s",
+            ),
+        ],
+    )
+    real_invoke = runner.invoke.side_effect
+
+    def spy_invoke(*, kind, response_cls, **kwargs):  # noqa: ANN001, ANN003, ANN202  # tracked: #288
+        if kind == "orchestrator" and response_cls is PreRoundDecision:
+            pre_prompts.append(kwargs.get("system_prompt", ""))
+        return real_invoke(kind=kind, response_cls=response_cls, **kwargs)
+
+    runner.invoke.side_effect = spy_invoke
+
+    with patch(
+        "vibesys.loops.agent.loop._run_framework_benchmark",
+        return_value=(None, 41.5),
+    ) as benchmark:
+        result = _invoke_orchestrate(
+            tmp_path,
+            ref_file,
+            runner,
+            max_rounds=1,
+            benchmark_result=BenchmarkResult(json_argument="--json", metric="primary_value"),
+        )
+
+    assert result is True
+    assert benchmark.call_args_list[0].kwargs["attempt_label"] == "cold-start baseline"
+    assert "primary_value=41.5" in pre_prompts[0]
+    assert "The candidate builds and runs, so profiling is possible" in pre_prompts[0]
+    # Round 1 has no campaign history, and the prompt must not claim otherwise.
+    assert "latest relevant entry under" not in pre_prompts[0]
+    assert "This is\nround 1" in pre_prompts[0]
+
+
+def test_cold_start_baseline_reports_a_broken_candidate_to_the_decision(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """A candidate that does not build tells round 1 to skip profiling."""
+    from vibesys.input_manifest import BenchmarkResult  # noqa: PLC0415  # tracked: #288
+
+    pre_prompts: list[str] = []
+    runner = _make_orchestrate_runner(
+        pre_decisions=[
+            PreRoundDecision(need_profile=False, profile_focus="", reasoning="nothing runs"),
+        ],
+        plans=[
+            OrchestratorPlan(task="Make it build", pass_criteria="ok", reasoning="broken"),  # noqa: S106  # tracked: #288
+        ],
+    )
+    real_invoke = runner.invoke.side_effect
+
+    def spy_invoke(*, kind, response_cls, **kwargs):  # noqa: ANN001, ANN003, ANN202  # tracked: #288
+        if kind == "orchestrator" and response_cls is PreRoundDecision:
+            pre_prompts.append(kwargs.get("system_prompt", ""))
+        return real_invoke(kind=kind, response_cls=response_cls, **kwargs)
+
+    runner.invoke.side_effect = spy_invoke
+
+    with patch(
+        "vibesys.loops.agent.loop._run_framework_benchmark",
+        return_value=("Framework benchmark failed.\ngo: cannot find module", None),
+    ):
+        result = _invoke_orchestrate(
+            tmp_path,
+            ref_file,
+            runner,
+            max_rounds=1,
+            benchmark_result=BenchmarkResult(json_argument="--json", metric="primary_value"),
+        )
+
+    assert result is True
+    assert "it did not complete" in pre_prompts[0]
+    assert "Set `need_profile=false`" in pre_prompts[0]
+    assert runner.counters["prof"] == 0
+
+
+def test_cold_start_baseline_runs_once_and_only_on_the_first_round(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
+    """Later rounds read runnability from their predecessor, not a re-probe."""
+    from vibesys.input_manifest import BenchmarkResult  # noqa: PLC0415  # tracked: #288
+
+    runner = _make_orchestrate_runner(
+        pre_decisions=[
+            PreRoundDecision(need_profile=False, profile_focus="", reasoning="one"),
+            PreRoundDecision(need_profile=False, profile_focus="", reasoning="two"),
+        ],
+        plans=[
+            OrchestratorPlan(task="One", pass_criteria="ok", reasoning="r1"),  # noqa: S106  # tracked: #288
+            OrchestratorPlan(task="Two", pass_criteria="ok", reasoning="r2"),  # noqa: S106  # tracked: #288
+        ],
+    )
+
+    with patch(
+        "vibesys.loops.agent.loop._run_framework_benchmark",
+        return_value=(None, 41.5),
+    ) as benchmark:
+        result = _invoke_orchestrate(
+            tmp_path,
+            ref_file,
+            runner,
+            max_rounds=2,
+            benchmark_result=BenchmarkResult(json_argument="--json", metric="primary_value"),
+        )
+
+    assert result is True
+    baseline_calls = [
+        call for call in benchmark.call_args_list if call.kwargs.get("attempt_label") is not None
+    ]
+    assert len(baseline_calls) == 1
+    assert baseline_calls[0].kwargs["round_number"] == 1
 
 
 def test_loop_runs_full_max_rounds_budget(tmp_path, ref_file):  # noqa: ANN001, ANN201  # tracked: #288
