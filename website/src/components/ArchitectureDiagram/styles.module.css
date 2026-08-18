@@ -13,6 +13,33 @@
   color: var(--ifm-font-color-base);
 }
 
+.diagramMobileScroll {
+  display: none;
+}
+
+.diagramMobile {
+  /* Fixed to its viewBox size (1 unit == 1px) instead of width: 100%, so
+     text stays legible; .diagramMobileScroll scrolls it horizontally
+     rather than shrinking it to fit a narrow viewport. */
+  width: 680px;
+  max-width: none;
+  height: auto;
+  color: var(--ifm-font-color-base);
+}
+
+@media screen and (max-width: 768px) {
+  .diagram {
+    display: none;
+  }
+
+  .diagramMobileScroll {
+    display: block;
+    overflow-x: auto;
+    margin: 0 -1rem;
+    padding: 0 1rem;
+  }
+}
+
 .zoneLabel {
   font-family: var(--ifm-font-family-monospace);
   font-size: 12.5px;
