@@ -41,9 +41,10 @@ def test_legacy_microservice_scenario_uses_source_evaluator() -> None:
         "run",
         "./cmd/servicebench",
     )
-    assert bundle.benchmark_result is not None
-    assert bundle.benchmark_result.json_argument == "--output-json"
-    assert bundle.benchmark_result.metric == "primary_value"
+    # The benchmark reports the workload's own objective metric on the
+    # evaluator result stream, so it declares no scraped result field.
+    assert bundle.benchmark_result is None
+    assert bundle.benchmark_result_protocol == 1
     assert ("--seed", "random") in _adjacent_pairs(bundle.benchmark_command)
     assert ("--fixture-seed", "random") in _adjacent_pairs(bundle.benchmark_command)
 

@@ -1,9 +1,10 @@
 Optimize a Train Ticket v0.2.0-compatible deployment for stateful API
 throughput while preserving externally observable behavior.
 
-Headline metric: successful `operations_per_second` from the shared evaluator
-result (`primary_value`, maximize). An operation may contain multiple dependent
-HTTP requests; update/read and create/read/delete sequences are counted once.
+Headline metric: successful `operations_per_second`, maximize. The workload
+declares it, and the evaluator reports it under that name on its result stream.
+An operation may contain multiple dependent HTTP requests; update/read and
+create/read/delete sequences are counted once.
 
 The candidate may use any implementation language, process topology, database,
 persistence format, or caching strategy. It must preserve the public HTTP

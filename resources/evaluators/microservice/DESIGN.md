@@ -240,3 +240,18 @@ include every failed attempt. `primary_value` is omitted unless every trial:
 Individual trials are the independent aggregation units. The summary reports
 their median, MAD, IQR, and a deterministic bootstrap interval when at least two
 valid trials are available.
+
+### Reporting the measurement
+
+`--vs-output` names the evaluator record stream specified by
+`sdk/vs-evaluator/PROTOCOL.md`. The stream declares the workload's own
+objective: its `metric` name, `unit`, and direction, read from the loaded
+workload rather than fixed by the command. The framework therefore sees the
+metric the task declared, and a task objective can name it directly instead of
+scraping a generically named summary field.
+
+The stream carries one metric because the summary carries one optimization
+score. A run without a `primary_value`, and any failure the command reaches
+before producing one, closes the stream with an error record naming the reason,
+so a failed benchmark reaches the framework as a reported failure rather than
+only as an exit status. The summary JSON stays diagnostic evidence.
