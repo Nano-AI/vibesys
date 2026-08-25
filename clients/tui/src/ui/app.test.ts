@@ -214,6 +214,19 @@ describe('OpenTUI presentation', () => {
         {kind: 'implementer', status: 'completed', roundNumber: 1, roundLabel: 'round-1-impl'},
         {kind: 'judge', status: 'active', roundNumber: 1, roundLabel: 'round-1-judge'},
       ],
+      activeExecutions: {
+        'judge-1': {
+          executionId: 'judge-1',
+          agentKind: 'judge',
+          roundLabel: 'round-1-judge',
+          roundNumber: 1,
+          stage: 'evaluation',
+          attempt: 1,
+          assignment: 'Evaluate the candidate',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'thinking', summary: 'Checking the diff'},
+        },
+      },
       selectedRound: 1,
       conversation: [
         {
@@ -237,9 +250,11 @@ describe('OpenTUI presentation', () => {
     const app = createOpenTuiApp(testRenderer.renderer, controller);
     registerCleanup(testRenderer.renderer, app);
 
-    // A phase is running, so the newest entry is marked as still working.
+    // A phase is running, but individual turn cards do not claim ownership of
+    // that activity because the transcript may be filtered to another agent.
     const live = await testRenderer.waitForFrame(value => value.includes('checking the diff'));
-    expect(live).toContain('Working');
+    expect(live).not.toContain('Working');
+    expect(live).toContain('Judge · Checking the diff');
 
     // Arrows put a cursor on an entry without touching the input.
     testRenderer.mockInput.pressKey('ARROW_UP');
@@ -252,6 +267,53 @@ describe('OpenTUI presentation', () => {
     const filtered = await frameAfter(testRenderer);
     expect(filtered).toContain('edited the kernel');
     expect(filtered).not.toContain('checking the diff');
+    // The selected implementer is complete, so the stable status line still
+    // reports the judge that is actually active.
+    expect(filtered).toContain('Judge · Checking the diff');
+  });
+
+  it('summarizes concurrent executions and disappears when they finish', async () => {
+    const testRenderer = await createTestRenderer({width: 120, height: 24});
+    const base = initialSessionState();
+    const controller = new FakeController({
+      ...base,
+      selectedRound: 2,
+      activeExecutions: {
+        implementer: {
+          executionId: 'implementer',
+          agentKind: 'implementer',
+          roundLabel: 'round-2-implementer',
+          roundNumber: 2,
+          stage: 'implementation',
+          attempt: 1,
+          assignment: 'Implement the queue',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'tool', summary: 'Running queue tests', tool: 'Bash'},
+        },
+        reviewer: {
+          executionId: 'reviewer',
+          agentKind: 'reviewer',
+          roundLabel: 'round-2-review',
+          roundNumber: 2,
+          stage: 'review',
+          attempt: 1,
+          assignment: 'Review the diff',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'thinking', summary: 'Inspecting the diff'},
+        },
+      },
+    });
+    const app = createOpenTuiApp(testRenderer.renderer, controller);
+    registerCleanup(testRenderer.renderer, app);
+
+    const active = await testRenderer.waitForFrame(value => value.includes('2 agents active'));
+    expect(active).toContain('Implementer: Running queue tests');
+    expect(active).toContain('Reviewer: Inspecting the diff');
+
+    controller.publish({...controller.state, activeExecutions: {}});
+    const finished = await frameAfter(testRenderer);
+    expect(finished).not.toContain('agents active');
+    expect(finished).not.toContain('Running queue tests');
   });
 
   it('shows the whole run in the strip and keeps early rounds reachable', async () => {
@@ -1275,6 +1337,8 @@ describe('theming', () => {
       phases: [
         {kind: 'implementer', status: 'completed', roundNumber: 1, roundLabel: 'round-1'},
         {kind: 'judge', status: 'failed', roundNumber: 1, roundLabel: 'round-1'},
+        {kind: 'profiler', status: 'cancelled', roundNumber: 1, roundLabel: 'round-1'},
+        {kind: 'reviewer', status: 'interrupted', roundNumber: 1, roundLabel: 'round-1'},
       ],
       todoPhases: [
         {
@@ -1296,6 +1360,10 @@ describe('theming', () => {
     expect(frame).toContain('× judge');
     expect(frame).toContain('completed');
     expect(frame).toContain('failed');
+    expect(frame).toContain('■ profiler');
+    expect(frame).toContain('cancelled');
+    expect(frame).toContain('! reviewer');
+    expect(frame).toContain('interrupted');
     expect(frame).toContain('✓ write the kernel');
     expect(frame).toContain('▶ benchmark it');
   });

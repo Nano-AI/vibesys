@@ -7,6 +7,7 @@ import {
   stripRounds,
   visibleRoundNumber,
 } from '../session-model.js';
+import {ActivityBarView} from './activity-bar.js';
 import {AgentMapView} from './agent-map.js';
 import {ChatOverlayView} from './chat-overlay.js';
 import {ChatPaneView, chatDockFits, chatPaneWidth} from './chat-pane.js';
@@ -105,6 +106,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   const todoStrip = new TodoStripView(renderer, controller, theme);
   const errorBanner = new ErrorBannerView(renderer, theme);
   const agentMap = new AgentMapView(renderer, controller, theme);
+  const activityBar = new ActivityBarView(renderer, theme);
   const overlay = new OverlayView(renderer, theme);
   const experimentLog = new ExperimentLogView(renderer, controller, theme);
   const rightPane = new RightPaneView(renderer, theme);
@@ -187,6 +189,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   root.add(roundStrip.output);
   root.add(main);
   root.add(todoStrip.output);
+  root.add(activityBar.output);
   root.add(bottom);
   root.add(overlay.output);
   root.add(themePicker.output);
@@ -207,6 +210,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     todoStrip.applyTheme(theme);
     errorBanner.applyTheme(theme);
     agentMap.applyTheme(theme);
+    activityBar.applyTheme(theme);
     overlay.applyTheme(theme);
     experimentLog.applyTheme(theme);
     rightPane.applyTheme(theme);
@@ -334,6 +338,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     );
     themePicker.render(state);
     chat.render(state);
+    activityBar.render(state);
     // One cursor, three places it can be. The modal owns it while it is open;
     // otherwise it belongs to whichever input the pane focus points at.
     const target: FocusTarget = state.chatOpen ? 'modal' : chatInputFocused ? 'chat' : 'command';
@@ -380,7 +385,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
       input.destroy();
       chatInput.destroy();
       chat.destroy();
-      conversation.destroy();
+      activityBar.destroy();
       roundStrip.destroy();
       agentMap.destroy();
       experimentLog.destroy();
