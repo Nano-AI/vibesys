@@ -398,7 +398,7 @@ describe('OpenTUI presentation', () => {
     expect(reopened).toContain('Implementer · Working');
   });
 
-  it('keeps activity fixed while a new turn changes the scroll height', async () => {
+  it('keeps activity fixed and aligned while a new turn changes the scroll height', async () => {
     const conversation = Array.from({length: 12}, (_, index) => ({
       id: `turn-${index}`,
       kind: 'status' as const,
@@ -463,11 +463,13 @@ describe('OpenTUI presentation', () => {
     const frame = testRenderer.renderer.root.findDescendantById('viewport');
     const scroll = testRenderer.renderer.root.findDescendantById('transcript-scroll');
     const activity = testRenderer.renderer.root.findDescendantById('conversation-activity-bar');
+    const firstTurn = testRenderer.renderer.root.findDescendantById('event-turn-0');
     if (frame === undefined || activity === undefined)
       throw new Error('transcript frame was missing');
     if (!(scroll instanceof ScrollBoxRenderable)) throw new Error('transcript was not scrollable');
     expect(scroll.parent).toBe(frame);
     expect(activity?.parent).toBe(frame);
+    expect(firstTurn?.x).toBe(activity.x);
   });
 
   it('keeps the global working indicator on the hypothesis log', async () => {
@@ -1277,6 +1279,21 @@ describe('OpenTUI presentation', () => {
     expect(answer).toContain('Inspecting configuration events');
     expect(answer).toContain('→ Read(run-events.jsonl)');
 
+    const overlay = testRenderer.renderer.root.findDescendantById('chat-overlay');
+    const transcript = testRenderer.renderer.root.findDescendantById('chat-transcript');
+    const turn = testRenderer.renderer.root.findDescendantById('event-chat-user');
+    const input = testRenderer.renderer.root.findDescendantById('chat-input-box');
+    if (
+      overlay === undefined ||
+      transcript === undefined ||
+      turn === undefined ||
+      input === undefined
+    )
+      throw new Error('modal chat geometry was missing');
+    expect(transcript.x).toBe(overlay.x + 2);
+    expect(turn.x).toBe(transcript.x);
+    expect(input.x).toBe(transcript.x);
+
     testRenderer.mockInput.pressKey('ESCAPE');
     await testRenderer.waitForFrame(value => !value.includes('Experiment chat'));
     expect(controller.state.chatOpen).toBe(false);
@@ -1920,6 +1937,14 @@ describe('theming', () => {
     expect(answered).toContain('Prefill dominates.');
     expect(answered).toContain('H-07');
     expect(answered).toContain('Implementation Details');
+
+    const pane = testRenderer.renderer.root.findDescendantById('chat-pane');
+    const scroll = testRenderer.renderer.root.findDescendantById('chat-pane-scroll');
+    const turn = testRenderer.renderer.root.findDescendantById('event-q');
+    if (pane === undefined || scroll === undefined || turn === undefined)
+      throw new Error('docked chat geometry was missing');
+    expect(scroll.x).toBe(pane.x + 2);
+    expect(turn.x).toBe(scroll.x);
   });
 
   it('keeps the chat, the table, and the visualization on screen together', async () => {

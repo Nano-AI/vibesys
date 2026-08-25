@@ -82,6 +82,8 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     width: 'auto',
     flexGrow: 1,
     flexDirection: 'column',
+    paddingLeft: 1,
+    paddingRight: 1,
     border: true,
     borderStyle: 'rounded',
     borderColor: theme.border,
@@ -174,8 +176,9 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   controller.onTogglePrompt(() => conversation.toggleLatestPrompt());
   viewport.add(conversation.output);
   transcriptFrame.add(viewport);
-  // Activity belongs inside the transcript frame, but outside its scrolling
-  // content. A new turn can then change scroll height without moving the line.
+  // The frame owns the shared horizontal inset for both turn cards and the
+  // fixed activity row. Activity stays outside scrolling content, so a new
+  // turn can change scroll height without moving the line.
   transcriptFrame.add(conversationActivityBar.output);
   main.add(agentMap.output);
   // The chat is the leftmost column of the landing view, so it is added before

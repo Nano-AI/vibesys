@@ -47,12 +47,12 @@ export class ConversationView {
     this.#emptyContent = options.emptyContent ?? 'Waiting for run events…';
     this.#renderMarkdown = options.renderMarkdown ?? true;
     this.#showsSelection = options.showsSelection ?? false;
+    // The bordered surface owns horizontal inset so transcript siblings, such
+    // as a fixed footer, share the same content origin as these turn cards.
     this.output = new BoxRenderable(renderer, {
       id: 'output',
       width: '100%',
       flexDirection: 'column',
-      paddingLeft: 1,
-      paddingRight: 1,
     });
   }
 
