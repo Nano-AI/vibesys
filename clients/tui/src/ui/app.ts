@@ -77,13 +77,19 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     fg: theme.accent,
     content: 'VibeSys · connecting',
   });
-  const viewport = new ScrollBoxRenderable(renderer, {
+  const transcriptFrame = new BoxRenderable(renderer, {
     id: 'viewport',
     width: 'auto',
     flexGrow: 1,
+    flexDirection: 'column',
     border: true,
     borderStyle: 'rounded',
     borderColor: theme.border,
+  });
+  const viewport = new ScrollBoxRenderable(renderer, {
+    id: 'transcript-scroll',
+    width: '100%',
+    flexGrow: 1,
     stickyScroll: true,
     stickyStart: 'bottom',
     viewportCulling: true,
@@ -167,15 +173,15 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   // request, the transcript decides which prompt it applies to.
   controller.onTogglePrompt(() => conversation.toggleLatestPrompt());
   viewport.add(conversation.output);
-  // The selected agent's activity is part of the turn stream: keep it as the
-  // final row inside the bordered, scrollable transcript rather than as chrome
-  // beneath the conversation.
-  viewport.add(conversationActivityBar.output);
+  transcriptFrame.add(viewport);
+  // Activity belongs inside the transcript frame, but outside its scrolling
+  // content. A new turn can then change scroll height without moving the line.
+  transcriptFrame.add(conversationActivityBar.output);
   main.add(agentMap.output);
   // The chat is the leftmost column of the landing view, so it is added before
   // the surfaces it sits beside.
   main.add(chatPane.output);
-  main.add(viewport);
+  main.add(transcriptFrame);
   // The log lives in the main pane rather than floating over it: it is the
   // landing view, not a dialog.
   main.add(experimentLog.output);
@@ -209,7 +215,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     markdownStyle = createMarkdownStyle(theme);
     root.backgroundColor = theme.canvas;
     header.fg = theme.accent;
-    viewport.borderColor = theme.border;
+    transcriptFrame.borderColor = theme.border;
     help.fg = theme.textSubtle;
     roundStrip.applyTheme(theme);
     todoStrip.applyTheme(theme);
@@ -277,7 +283,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     // The round strip and agent map are per-round detail. They belong to a
     // hypothesis trajectory, not to the list of claims.
     agentMap.output.visible = !showLog;
-    viewport.visible = !showLog;
+    transcriptFrame.visible = !showLog;
     roundStrip.output.visible = !showLog;
     todoStrip.output.visible = !showLog;
     if (!showLog) {
@@ -302,7 +308,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     const transcriptFocused = showLog
       ? showSplit && state.layout.focus === 'left'
       : state.roundFocus === 'transcript';
-    viewport.borderColor = transcriptFocused ? theme.borderFocus : theme.border;
+    transcriptFrame.borderColor = transcriptFocused ? theme.borderFocus : theme.border;
     // Match the chat to the left pane's rectangle so it sits beside the
     // visualization instead of over it. Bounds come from the siblings that
     // actually occupy those rows, so a taller todo strip still fits.

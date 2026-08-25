@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it} from 'bun:test';
-import {InputRenderable, rgbToHex, ScrollBoxRenderable} from '@opentui/core';
+import {CliRenderEvents, InputRenderable, rgbToHex, ScrollBoxRenderable} from '@opentui/core';
 import {createTestRenderer, type TestRendererSetup} from '@opentui/core/testing';
 import type {HypothesisEntry} from '../protocol.js';
 import type {SessionController} from '../session-controller.js';
@@ -397,6 +397,76 @@ describe('OpenTUI presentation', () => {
     controller.selectAgent('implementer');
     const reopened = await frameAfter(testRenderer);
     expect(reopened).toContain('Implementer · Editing the queue');
+  });
+
+  it('keeps activity fixed while a new turn changes the scroll height', async () => {
+    const conversation = Array.from({length: 12}, (_, index) => ({
+      id: `turn-${index}`,
+      kind: 'status' as const,
+      content: `recorded turn ${index}`,
+      agentKind: 'implementer',
+      roundNumber: 1,
+    }));
+    const testRenderer = await createTestRenderer({width: 100, height: 20});
+    const controller = new FakeController({
+      ...initialSessionState(),
+      rounds: [{number: 1, status: 'active'}],
+      selectedRound: 1,
+      selectedAgentKind: 'implementer',
+      conversation,
+      activeExecutions: {
+        'impl-1': {
+          executionId: 'impl-1',
+          agentKind: 'implementer',
+          roundLabel: 'round-1-implementer',
+          roundNumber: 1,
+          stage: 'implementation',
+          attempt: 1,
+          assignment: 'Implement the queue',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'thinking', summary: 'Thinking'},
+        },
+      },
+    });
+    const app = createOpenTuiApp(testRenderer.renderer, controller);
+    registerCleanup(testRenderer.renderer, app);
+    await testRenderer.waitForFrame(value => value.includes('Implementer · Working'));
+
+    const frames: string[] = [];
+    const captureFrame = (): void => {
+      frames.push(testRenderer.captureCharFrame());
+    };
+    testRenderer.renderer.on(CliRenderEvents.FRAME, captureFrame);
+    controller.publish({
+      ...controller.state,
+      conversation: [
+        ...conversation,
+        {
+          id: 'new-turn',
+          kind: 'assistant',
+          content: 'newly rendered turn',
+          agentKind: 'implementer',
+          roundNumber: 1,
+        },
+      ],
+    });
+    await testRenderer.waitForVisualIdle();
+    testRenderer.renderer.off(CliRenderEvents.FRAME, captureFrame);
+
+    expect(frames.length).toBeGreaterThan(0);
+    const activityRows = frames.map(frame =>
+      frame.split('\n').findIndex(line => line.includes('Implementer · Working')),
+    );
+    expect(activityRows.every(row => row >= 0)).toBe(true);
+    expect(new Set(activityRows).size).toBe(1);
+    expect(frames.at(-1)).toContain('newly rendered turn');
+
+    const frame = testRenderer.renderer.root.findDescendantById('viewport');
+    const scroll = testRenderer.renderer.root.findDescendantById('transcript-scroll');
+    const activity = testRenderer.renderer.root.findDescendantById('conversation-activity-bar');
+    if (!(scroll instanceof ScrollBoxRenderable)) throw new Error('transcript was not scrollable');
+    expect(scroll.parent).toBe(frame);
+    expect(activity?.parent).toBe(frame);
   });
 
   it('keeps the global activity summary on the hypothesis log', async () => {

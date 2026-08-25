@@ -5,57 +5,6 @@ import type {Theme} from './theme.js';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_INTERVAL_MS = 120;
-const THINKING_WORD_INTERVAL_MS = 5_000;
-
-export const THINKING_WORDS = [
-  'Pondering',
-  'Reasoning',
-  'Exploring',
-  'Inspecting',
-  'Analyzing',
-  'Searching',
-  'Reading',
-  'Reviewing',
-  'Checking',
-  'Tracing',
-  'Mapping',
-  'Comparing',
-  'Testing',
-  'Building',
-  'Editing',
-  'Refining',
-  'Validating',
-  'Measuring',
-  'Profiling',
-  'Debugging',
-  'Investigating',
-  'Calculating',
-  'Modeling',
-  'Simulating',
-  'Organizing',
-  'Synthesizing',
-  'Drafting',
-  'Evaluating',
-  'Verifying',
-  'Considering',
-  'Preparing',
-  'Coordinating',
-  'Sequencing',
-  'Optimizing',
-  'Experimenting',
-  'Discovering',
-  'Resolving',
-  'Learning',
-  'Parsing',
-  'Compiling',
-  'Linking',
-  'Sampling',
-  'Forecasting',
-  'Rechecking',
-  'Rethinking',
-  'Iterating',
-  'Focusing',
-] as const;
 export type ActivityBarScope = 'global' | 'conversation';
 
 /** Stable, selection-aware status line for backend-authoritative execution activity. */
@@ -123,64 +72,31 @@ export class ActivityBarView {
     if (this.#executions.length === 1) {
       const execution = this.#executions[0];
       if (execution === undefined) return;
-      this.output.content = `${spinner} ${roleLabel(execution.agentKind)} · ${activitySummary(execution, nowMs)} · ${elapsed(execution.startedAt, nowMs)}`;
+      this.output.content = `${spinner} ${roleLabel(execution.agentKind)} · ${activitySummary(execution)} · ${elapsed(execution.startedAt, nowMs)}`;
       return;
     }
     const summaries = this.#executions
       .slice(0, 3)
-      .map(execution => `${roleLabel(execution.agentKind)}: ${activitySummary(execution, nowMs)}`)
+      .map(execution => `${roleLabel(execution.agentKind)}: ${activitySummary(execution)}`)
       .join(' · ');
     const remainder = this.#executions.length > 3 ? ` · +${this.#executions.length - 3} more` : '';
     this.output.content = `${spinner} ${this.#executions.length} agents active · ${summaries}${remainder}`;
   }
 }
 
-export function activitySummary(execution: ActiveAgentExecution, nowMs = Date.now()): string {
+export function activitySummary(execution: ActiveAgentExecution): string {
   const summary = execution.activity.summary.trim();
   if (
     execution.activity.mode === 'thinking' &&
     (summary === '' || /^thinking(?:\.\.\.|\u2026)?$/i.test(summary))
   ) {
-    return thinkingWord(execution, nowMs);
+    return 'Working';
   }
   if (summary !== '') return summary;
   if (execution.activity.mode === 'tool' && execution.activity.tool) {
     return `Using ${execution.activity.tool}`;
   }
   return modeLabel(execution.activity.mode);
-}
-
-function thinkingWord(execution: ActiveAgentExecution, nowMs: number): string {
-  const hash = stableHash(execution.executionId);
-  const offset = hash % THINKING_WORDS.length;
-  let stride = 1 + ((hash >>> 8) % (THINKING_WORDS.length - 1));
-  while (greatestCommonDivisor(stride, THINKING_WORDS.length) !== 1) stride += 1;
-  if (stride >= THINKING_WORDS.length) stride = 1;
-
-  const startedAtMs = Date.parse(execution.startedAt);
-  const elapsedMs = Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
-  const tick = Math.floor(elapsedMs / THINKING_WORD_INTERVAL_MS);
-  return THINKING_WORDS[(offset + tick * stride) % THINKING_WORDS.length] ?? 'Pondering';
-}
-
-function stableHash(value: string): number {
-  let hash = 2_166_136_261;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return hash >>> 0;
-}
-
-function greatestCommonDivisor(left: number, right: number): number {
-  let a = left;
-  let b = right;
-  while (b !== 0) {
-    const remainder = a % b;
-    a = b;
-    b = remainder;
-  }
-  return a;
 }
 
 function roleLabel(role: string): string {
@@ -190,7 +106,7 @@ function roleLabel(role: string): string {
 
 function modeLabel(mode: ActiveAgentExecution['activity']['mode']): string {
   const labels: Record<typeof mode, string> = {
-    thinking: 'Thinking',
+    thinking: 'Working',
     responding: 'Responding',
     tool: 'Using a tool',
     waiting: 'Waiting',
