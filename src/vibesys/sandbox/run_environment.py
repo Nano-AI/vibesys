@@ -509,7 +509,6 @@ class SkyPilotEnvironment(DockerEnvironment):
             commands=commands,
             benchmark_output_argument=request.benchmark_output_argument,
             state_namespace=request.state_namespace,
-            socket_path=request.log_dir / "skypilot-bridge.sock",
             log=log,
         )
         try:

@@ -13,6 +13,7 @@ import shlex
 import shutil
 import socket
 import socketserver
+import tempfile
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -58,6 +59,11 @@ _MAX_ARTIFACT_BYTES = 512 * 1024
 _MAX_STAGED_FILES = 50_000
 _MAX_STAGED_BYTES = 512 * 1024 * 1024
 _FRAMEWORK_ARGUMENT_COUNT = 2
+_SOCKET_DIR_PREFIX = "vibesys-skypilot-"
+_SOCKET_FILE_NAME = "bridge.sock"
+# Linux sockaddr_un.sun_path is 108 bytes including the NUL terminator; leave
+# room for it so socket.bind never raises "AF_UNIX path too long".
+_MAX_SOCKET_PATH_BYTES = 107
 _FRAMEWORK_ARTIFACT = re.compile(r"^/tmp/vibesys-framework-benchmark-[a-zA-Z0-9._-]+\.json$")
 _STAGING_EXCLUDED_NAMES = frozenset(
     {
@@ -82,6 +88,34 @@ _STAGING_EXCLUDED_NAMES = frozenset(
 class _BridgeServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
     block_on_close = False
+
+
+def _allocate_socket_path(socket_root: Path | None) -> tuple[Path, Path]:
+    """Create a short-lived, collision-safe directory for one bridge socket.
+
+    The socket must live under a short runtime path, not the deep durable
+    state tree, so its length stays well inside the AF_UNIX ``sun_path``
+    limit regardless of how long the owning project key or run id are.
+    Returns ``(socket_dir, socket_path)``; the caller owns removing
+    ``socket_dir`` on close. Raises ``OSError`` naming the offending path if
+    even a fresh runtime directory would still be too long.
+    """
+    socket_dir = Path(
+        tempfile.mkdtemp(
+            prefix=_SOCKET_DIR_PREFIX,
+            dir=str(socket_root) if socket_root is not None else None,
+        )
+    )
+    socket_path = socket_dir / _SOCKET_FILE_NAME
+    encoded_length = len(os.fsencode(str(socket_path)))
+    if encoded_length > _MAX_SOCKET_PATH_BYTES:
+        shutil.rmtree(socket_dir, ignore_errors=True)
+        raise OSError(  # noqa: TRY003
+            f"SkyPilot bridge socket path {socket_path} is {encoded_length} bytes, "
+            f"exceeding the {_MAX_SOCKET_PATH_BYTES}-byte AF_UNIX sun_path limit; "
+            "set TMPDIR (or pass a shorter socket_root) to a shorter path"
+        )
+    return socket_dir, socket_path
 
 
 class _ArtifactStream:
@@ -226,11 +260,18 @@ class SkyPilotBridge:
         commands: Mapping[str, Sequence[str]],
         benchmark_output_argument: str | None,
         state_namespace: StateNamespace,
-        socket_path: Path,
         log: Callable[[str], None],
         max_infrastructure_retries: int = 1,
+        socket_root: Path | None = None,
     ) -> None:
-        """Bind fixed host policy and trusted evaluator commands."""
+        """Bind fixed host policy and trusted evaluator commands.
+
+        The socket is allocated on `start()` under a short-lived runtime
+        directory (see `_allocate_socket_path`), independent of
+        `state_namespace`'s durable, potentially deep path. `socket_root`
+        overrides the runtime directory's parent (primarily for tests); it
+        defaults to the system temp directory.
+        """
         self._runner = runner
         self._cluster_name = cluster_name
         self._resources = resources
@@ -241,7 +282,9 @@ class SkyPilotBridge:
         self._benchmark_output_argument = benchmark_output_argument
         self._state_namespace = state_namespace
         self._journal = InvocationJournal(state_namespace)
-        self.socket_path = socket_path
+        self._socket_root = socket_root
+        self._socket_dir: Path | None = None
+        self.socket_path: Path | None = None
         self._log = log
         self._max_infrastructure_retries = max_infrastructure_retries
         self._server: _BridgeServer | None = None
@@ -265,9 +308,8 @@ class SkyPilotBridge:
             raise RuntimeError(  # noqa: TRY003
                 "SkyPilot bridge cannot be restarted after close"
             )
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        self.socket_path.unlink(missing_ok=True)
         try:
+            self._socket_dir, self.socket_path = _allocate_socket_path(self._socket_root)
             previous_cluster = self._runner.inspect_cluster(self._cluster_name)
             self._cluster_replaced_on_start = (
                 previous_cluster is None
@@ -297,7 +339,7 @@ class SkyPilotBridge:
             raise
 
     def close(self) -> None:
-        """Stop serving, release the allocation, and remove the socket."""
+        """Stop serving, release the allocation, and remove the socket directory."""
         if self._closed:
             return
         self._closed = True
@@ -320,7 +362,8 @@ class SkyPilotBridge:
                 self._runner.release(cluster_name)
             except Exception as exc:  # noqa: BLE001
                 self._log(f"[warn] SkyPilot allocation release failed: {type(exc).__name__}")
-        self.socket_path.unlink(missing_ok=True)
+        if self._socket_dir is not None:
+            shutil.rmtree(self._socket_dir, ignore_errors=True)
 
     def _cancel_active_jobs(self) -> None:
         """Best-effort cancel every job known at this point in teardown."""

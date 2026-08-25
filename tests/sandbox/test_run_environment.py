@@ -994,7 +994,7 @@ remote_artifact_root = "/remote/vibesys"
     class FakeBridge:
         def __init__(self, **kwargs):  # noqa: ANN003, ANN204
             captures.update(kwargs)
-            self.socket_path = kwargs["socket_path"]
+            self.socket_path = tmp_path / "fake-bridge.sock"
             self.closed = 0
 
         def start(self) -> None:
