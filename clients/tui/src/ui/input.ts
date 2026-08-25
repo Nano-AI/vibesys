@@ -13,6 +13,8 @@ export interface InputPanel {
   box: BoxRenderable;
   suggestions: BoxRenderable;
   completeSuggestion(): boolean;
+  moveSuggestion(delta: number): boolean;
+  suggestionsVisible(): boolean;
   /** True when nothing is typed, so Enter belongs to whatever pane is behind. */
   isEmpty(): boolean;
   focus(): void;
@@ -42,6 +44,7 @@ export function createInputPanel(
   });
   let syntaxStyle = commandSyntaxStyle(theme);
   let commandStyleId = syntaxStyle.getStyleId('slash-command');
+  const plainTextStyleId = syntaxStyle.getStyleId('plain-text');
   const input = new InputRenderable(renderer, {
     id: 'input',
     width: '100%',
@@ -77,6 +80,18 @@ export function createInputPanel(
   });
   suggestions.add(suggestionList);
   let matches: readonly SlashCommand[] = [];
+  let selectedIndex = 0;
+
+  const renderSuggestions = (currentValue: string): void => {
+    suggestionList.content = matches
+      .map(
+        (command, index) =>
+          `${index === selectedIndex ? '›' : ' '} ${command.name.padEnd(10)} ${command.description}${
+            index === selectedIndex && command.name !== currentValue ? '  [Tab]' : ''
+          }`,
+      )
+      .join('\n');
+  };
 
   const updateDecorations = (value: string): void => {
     input.clearAllHighlights();
@@ -86,18 +101,12 @@ export function createInputPanel(
     }
 
     matches = suggestSlashCommands(value);
+    selectedIndex = 0;
     const visible = matches.length > 0;
     suggestions.visible = visible;
     suggestions.height = matches.length + 2;
     suggestionList.height = Math.max(1, matches.length);
-    suggestionList.content = matches
-      .map(
-        (command, index) =>
-          `${index === 0 ? '›' : ' '} ${command.name.padEnd(10)} ${command.description}${
-            index === 0 && command.name !== value ? '  [Tab]' : ''
-          }`,
-      )
-      .join('\n');
+    renderSuggestions(value);
   };
   const submit = (value: string): void => {
     input.value = '';
@@ -110,10 +119,19 @@ export function createInputPanel(
     box,
     suggestions,
     completeSuggestion(): boolean {
-      const suggestion = matches[0];
+      const suggestion = matches[selectedIndex];
       if (suggestion === undefined || suggestion.name === input.value) return false;
       input.value = suggestion.name;
       return true;
+    },
+    moveSuggestion(delta: number): boolean {
+      if (matches.length === 0) return false;
+      selectedIndex = (selectedIndex + delta + matches.length) % matches.length;
+      renderSuggestions(input.value);
+      return true;
+    },
+    suggestionsVisible(): boolean {
+      return suggestions.visible;
     },
     isEmpty: () => input.value.trim() === '',
     focus: () => input.focus(),

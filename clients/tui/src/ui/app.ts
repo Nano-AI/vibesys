@@ -205,6 +205,8 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   };
   const unbindKeys = bindKeybindings(renderer, controller, viewport, {
     completeInput: () => input.completeSuggestion(),
+    moveSuggestion: (delta) => input.moveSuggestion(delta),
+    suggestionsVisible: () => input.suggestionsVisible(),
     inputIsEmpty: () => input.isEmpty(),
     closeChat: () => controller.closeChat(),
     toggleLatestPrompt: () => conversation.toggleLatestPrompt(),

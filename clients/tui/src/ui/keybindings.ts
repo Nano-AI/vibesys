@@ -4,6 +4,8 @@ import {experimentLogVisible} from '../session-model.js';
 
 export interface KeybindingActions {
   completeInput(): boolean;
+  moveSuggestion(delta: number): boolean;
+  suggestionsVisible(): boolean;
   inputIsEmpty(): boolean;
   closeChat(): void;
   toggleLatestPrompt(): void;
@@ -83,11 +85,17 @@ export function bindKeybindings(
     // rounds behind the selected hypothesis. The input keeps priority over the
     // table, so a typed command runs on its own Enter and its result opens over
     // the log rather than the log swallowing the keystroke.
+    // When slash-command suggestions are visible, Up/Down navigate the
+    // suggestion list instead of the experiment log behind it.
     if (experimentLogVisible(controller.state)) {
       // Escape has nowhere to go from the root view: the log is the root.
-      if (key.name === 'up') controller.moveExperimentSelection(-1);
-      else if (key.name === 'down') controller.moveExperimentSelection(1);
-      else if (key.name === 'pageup') controller.moveExperimentSelection(-10);
+      if (key.name === 'up') {
+        if (actions.suggestionsVisible()) actions.moveSuggestion(-1);
+        else controller.moveExperimentSelection(-1);
+      } else if (key.name === 'down') {
+        if (actions.suggestionsVisible()) actions.moveSuggestion(1);
+        else controller.moveExperimentSelection(1);
+      } else if (key.name === 'pageup') controller.moveExperimentSelection(-10);
       else if (key.name === 'pagedown') controller.moveExperimentSelection(10);
       else if (key.name === 'return' || key.name === 'enter') {
         // A typed command belongs to the input; let its own handler run it so
