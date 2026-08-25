@@ -115,13 +115,6 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   const conversation = new ConversationView(renderer, controller, markdownStyle, theme, {
     showsSelection: true,
   });
-  const transcriptColumn = new BoxRenderable(renderer, {
-    id: 'transcript-column',
-    width: 'auto',
-    flexGrow: 1,
-    flexShrink: 1,
-    flexDirection: 'column',
-  });
   const chat = new ChatOverlayView(renderer, controller, markdownStyle, theme);
   const chatPane = new ChatPaneView(renderer, controller, markdownStyle, theme);
   // Clicking either box moves the pane focus to it, so the border, the hint,
@@ -174,13 +167,15 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   // request, the transcript decides which prompt it applies to.
   controller.onTogglePrompt(() => conversation.toggleLatestPrompt());
   viewport.add(conversation.output);
-  transcriptColumn.add(viewport);
-  transcriptColumn.add(conversationActivityBar.output);
+  // The selected agent's activity is part of the turn stream: keep it as the
+  // final row inside the bordered, scrollable transcript rather than as chrome
+  // beneath the conversation.
+  viewport.add(conversationActivityBar.output);
   main.add(agentMap.output);
   // The chat is the leftmost column of the landing view, so it is added before
   // the surfaces it sits beside.
   main.add(chatPane.output);
-  main.add(transcriptColumn);
+  main.add(viewport);
   // The log lives in the main pane rather than floating over it: it is the
   // landing view, not a dialog.
   main.add(experimentLog.output);
@@ -283,7 +278,6 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     // hypothesis trajectory, not to the list of claims.
     agentMap.output.visible = !showLog;
     viewport.visible = !showLog;
-    transcriptColumn.visible = !showLog;
     roundStrip.output.visible = !showLog;
     todoStrip.output.visible = !showLog;
     if (!showLog) {

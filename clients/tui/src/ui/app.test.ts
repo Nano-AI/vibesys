@@ -377,8 +377,20 @@ describe('OpenTUI presentation', () => {
       line.includes('Implementer · Editing the queue'),
     );
     const helpLine = lines.findIndex(line => line.includes('[/]: round'));
+    const viewportBottomBorder = lines.findIndex(
+      (line, index) =>
+        index > activityLineIndex && index < helpLine && line.trimEnd().endsWith('╯'),
+    );
     expect(activityLineIndex).toBeGreaterThan(promptLine);
-    expect(activityLineIndex).toBeLessThan(helpLine);
+    expect(activityLine?.trimEnd().endsWith('│')).toBe(true);
+    expect(viewportBottomBorder).toBeGreaterThan(activityLineIndex);
+    expect(viewportBottomBorder).toBeLessThan(helpLine);
+    const transcriptColumn = Math.max(0, (activityLine?.indexOf('Implementer') ?? 2) - 2);
+    expect(
+      lines
+        .slice(activityLineIndex + 1, viewportBottomBorder)
+        .every(line => line.slice(transcriptColumn).replaceAll('│', '').trim() === ''),
+    ).toBe(true);
 
     controller.selectAgent('implementer');
     await frameAfter(testRenderer);
