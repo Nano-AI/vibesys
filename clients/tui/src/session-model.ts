@@ -105,6 +105,7 @@ export interface LayoutState {
 
 export interface ThemePicker {
   selected: ThemeName;
+  original: ThemeName;
 }
 
 export interface UsageMeter {
@@ -392,7 +393,7 @@ export function setTheme(state: SessionState, themeName: ThemeName): SessionStat
 
 /** Opens the theme list as a selection, starting on the active theme. */
 export function openThemePicker(state: SessionState): SessionState {
-  return {...state, overlay: null, themePicker: {selected: state.themeName}};
+  return {...state, overlay: null, themePicker: {selected: state.themeName, original: state.themeName}};
 }
 
 /**
@@ -406,7 +407,7 @@ export function moveThemeSelection(state: SessionState, delta: number): SessionS
   const index = Math.min(THEME_NAMES.length - 1, Math.max(0, current + delta));
   const selected = THEME_NAMES[index];
   if (selected === undefined || selected === picker.selected) return state;
-  return {...state, themePicker: {selected}};
+  return {...state, themePicker: {...picker, selected}};
 }
 
 /** Closes the picker, leaving the theme as it was when it opened. */

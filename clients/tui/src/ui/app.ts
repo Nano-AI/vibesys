@@ -126,8 +126,9 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   let lastState: SessionState = controller.state;
   const render = (state: SessionState): void => {
     lastState = state;
+    const previewName = state.themePicker?.selected ?? state.themeName;
     const releasePreviousStyle =
-      state.themeName === themeName ? undefined : applyTheme(state.themeName);
+      previewName === themeName ? undefined : applyTheme(previewName);
     const showLog = experimentLogVisible(state);
     // A split only happens when the terminal can carry both panes. Narrower
     // than that, a visualization keeps the modal it had before the split
