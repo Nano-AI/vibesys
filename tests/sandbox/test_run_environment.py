@@ -1027,6 +1027,11 @@ remote_artifact_root = "/remote/vibesys"
 
     kind, kwargs = backend.calls[0]
     assert kind is SandboxKind.DOCKER
+    # Evaluation runs on the remote SkyPilot cluster; this editor container
+    # gets no local GPU devices *or* their unlock groups (e.g. rocm's
+    # video/render) — see RocmBackend.make_sandbox and
+    # test_docker_skip_accelerator_also_skips_device_groups in
+    # tests/backends/test_rocm_backend.py for the composed-args proof.
     assert kwargs["attach_accelerator"] is False
     mounts = kwargs["bind_mounts"]
     assert any(target == "/opt/vibesys-skypilot/bridge.sock" for _, target, _ in mounts)
