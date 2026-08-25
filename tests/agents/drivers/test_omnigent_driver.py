@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextlib
 import inspect
+import json
 import os
+import shlex
 import shutil
 import sys
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -21,12 +26,15 @@ from vibesys.agents.contracts import (
     AgentTurnRequest,
     MCPServerSpec,
 )
+from vibesys.agents.drivers import omnigent as driver_subject
 from vibesys.agents.drivers.omnigent import (
     _TOOL_EXECUTOR_ATTR,
     OmnigentDriver,
     OmnigentDriverError,
     OmnigentSession,
     _build_os_tools,
+    _leased_session_environment,
+    _patched_environ,
 )
 from vibesys.agents.omnigent.providers import OMNIGENT_PROVIDER_EXECUTORS
 from vibesys.schemas import JudgeResponse
@@ -145,6 +153,239 @@ def _session(tmp_path: Path, executor: _FakeExecutor) -> tuple[OmnigentDriver, O
     return driver, session
 
 
+def test_identical_environment_overrides_restore_after_the_final_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "VIBESYS_TEST_CONCURRENT_ENV"
+    monkeypatch.delenv(key, raising=False)
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    first_exited = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def first() -> None:
+        with _patched_environ({key: "shared"}):
+            first_entered.set()
+            assert second_entered.wait(timeout=2)
+            assert release_first.wait(timeout=2)
+        first_exited.set()
+
+    def second() -> None:
+        assert first_entered.wait(timeout=2)
+        with _patched_environ({key: "shared"}):
+            second_entered.set()
+            assert first_exited.wait(timeout=2)
+            assert os.environ[key] == "shared"
+            assert release_second.wait(timeout=2)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(first)
+        second_future = pool.submit(second)
+        assert second_entered.wait(timeout=2)
+        release_first.set()
+        assert first_exited.wait(timeout=2)
+        release_second.set()
+        first_future.result(timeout=2)
+        second_future.result(timeout=2)
+
+    assert key not in os.environ
+
+
+def test_conflicting_environment_overrides_fail_without_corrupting_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "VIBESYS_TEST_CONFLICTING_ENV"
+    monkeypatch.delenv(key, raising=False)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def owner() -> None:
+        with _patched_environ({key: "optimizer"}):
+            entered.set()
+            assert release.wait(timeout=2)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(owner)
+        assert entered.wait(timeout=2)
+        try:
+            with (
+                pytest.raises(OmnigentDriverError, match=key),
+                _patched_environ({key: "chat"}),
+            ):
+                pytest.fail("conflicting environment context must not start")
+            assert os.environ[key] == "optimizer"
+        finally:
+            release.set()
+        future.result(timeout=2)
+
+    assert key not in os.environ
+
+
+def test_omitted_environment_override_cannot_inherit_an_active_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "VIBESYS_TEST_OMITTED_ENV"
+    monkeypatch.delenv(key, raising=False)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def owner() -> None:
+        with _leased_session_environment({key: "optimizer"}):
+            entered.set()
+            assert release.wait(timeout=2)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(owner)
+        assert entered.wait(timeout=2)
+        try:
+            with (
+                pytest.raises(OmnigentDriverError, match=key),
+                _leased_session_environment({}),
+            ):
+                pytest.fail("an omitted environment value must not be inherited")
+        finally:
+            release.set()
+        future.result(timeout=2)
+
+    assert key not in os.environ
+
+
+def test_identical_session_environments_allow_nested_tool_superset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_key = "VIBESYS_TEST_SESSION_ENV"
+    tool_key = "VIBESYS_TEST_RUST_TOOL_ENV"
+    monkeypatch.delenv(session_key, raising=False)
+    monkeypatch.delenv(tool_key, raising=False)
+    both_entered = threading.Barrier(2)
+    tool_entered = threading.Event()
+    release_tool = threading.Event()
+
+    def optimizer() -> None:
+        environment = {session_key: "shared"}
+        with _leased_session_environment(environment), _patched_environ(environment):
+            both_entered.wait(timeout=2)
+            with _patched_environ({**environment, tool_key: "scratch/cargo-home"}):
+                tool_entered.set()
+                assert release_tool.wait(timeout=2)
+
+    def chat() -> None:
+        environment = {session_key: "shared"}
+        with _leased_session_environment(environment), _patched_environ(environment):
+            both_entered.wait(timeout=2)
+            assert tool_entered.wait(timeout=2)
+            assert os.environ[session_key] == "shared"
+            release_tool.set()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(optimizer), pool.submit(chat)]
+        for future in futures:
+            future.result(timeout=2)
+
+    assert session_key not in os.environ
+    assert tool_key not in os.environ
+
+
+def test_turn_allows_rust_tool_environment_superset_in_worker_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rust_key = "VIBESYS_TEST_RUST_TOOL_PATH"
+    monkeypatch.delenv(rust_key, raising=False)
+
+    class RustToolExecutor(_FakeExecutor):
+        def run_turn(self, *_args: object, **_kwargs: object):  # noqa: ANN202
+            async def stream():  # noqa: ANN202
+                def invoke_tool() -> None:
+                    with _patched_environ(
+                        {
+                            "DRIVER_TEST": "set",
+                            rust_key: "scratch/cargo-home",
+                        }
+                    ):
+                        assert os.environ["DRIVER_TEST"] == "set"
+                        assert os.environ[rust_key] == "scratch/cargo-home"
+
+                await asyncio.to_thread(invoke_tool)
+                yield TurnComplete(response="tool complete")
+
+            return stream()
+
+    driver, session = _session(tmp_path, RustToolExecutor([]))
+
+    assert session.run_turn(AgentTurnRequest("use cargo")).text == "tool complete"
+
+    driver.close()
+    assert rust_key not in os.environ
+
+
+def test_distinct_tool_dispatches_scope_rust_environment_without_process_patch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.inner import os_env as omnigent_os_env  # noqa: PLC0415
+    from omnigent.tools.builtins import os_env as omnigent_os_tools  # noqa: PLC0415
+
+    key = "CARGO_HOME"
+    monkeypatch.setenv(key, "ambient")
+    invoked = threading.Barrier(2)
+
+    class Resource:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class ShellTool:
+        @staticmethod
+        def name() -> str:
+            return "sys_os_shell"
+
+        @staticmethod
+        def get_schema() -> dict[str, Any]:
+            return {
+                "function": {
+                    "name": "sys_os_shell",
+                    "description": "shell",
+                    "parameters": {"type": "object"},
+                }
+            }
+
+        def invoke(self, arguments: str, _context: Any) -> str:  # noqa: ANN401
+            invoked.wait(timeout=2)
+            return str(json.loads(arguments)["command"])
+
+    resources: list[Resource] = []
+
+    def create_environment(_spec: Any) -> Resource:  # noqa: ANN401
+        resource = Resource()
+        resources.append(resource)
+        return resource
+
+    monkeypatch.setattr(omnigent_os_env, "create_os_environment", create_environment)
+    monkeypatch.setattr(omnigent_os_tools, "build_os_env_tools", lambda _env: [ShellTool()])
+    cargo_homes = [str(tmp_path / "optimizer cargo"), str(tmp_path / "chat cargo")]
+    built = [_build_os_tools(object(), tmp_path, {key: cargo_home}) for cargo_home in cargo_homes]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(asyncio.run, dispatch("sys_os_shell", {"command": "cargo test"}))
+            for _, dispatch, _ in built
+        ]
+        commands = [future.result(timeout=2) for future in futures]
+
+    assert commands == [
+        f"export CARGO_HOME={shlex.quote(cargo_homes[0])}; cargo test",
+        f"export CARGO_HOME={shlex.quote(cargo_homes[1])}; cargo test",
+    ]
+    assert os.environ[key] == "ambient"
+    for _, _, os_environments in built:
+        for os_environment in os_environments:
+            os_environment.close()
+    assert [resource.close_calls for resource in resources] == [1, 1]
+
+
 def test_turn_normalizes_events_usage_schema_and_session_id(tmp_path: Path) -> None:
     executor = _FakeExecutor(
         [
@@ -212,6 +453,325 @@ def test_timeout_poisons_session_and_cleanup_is_idempotent(tmp_path: Path) -> No
     session.close()
     driver.close()
     assert executor.close_calls == 1
+
+
+def test_session_cleanup_closes_owned_os_environments(tmp_path: Path) -> None:
+    class Resource:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    executor = _FakeExecutor([])
+    resource = Resource()
+    driver, _session_instance = _session(tmp_path, executor)
+    driver._executor_os_environments[id(executor)] = (resource,)  # noqa: SLF001
+
+    driver.close()
+
+    assert resource.close_calls == 1
+
+
+def test_close_cancels_an_active_turn_from_another_thread(tmp_path: Path) -> None:
+    started = threading.Event()
+    finalized = threading.Event()
+
+    class NeverEndingExecutor(_FakeExecutor):
+        def run_turn(self, *_args: object, **_kwargs: object):  # noqa: ANN202
+            async def stream():  # noqa: ANN202
+                started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    finalized.set()
+                if False:
+                    yield None
+
+            return stream()
+
+    executor = NeverEndingExecutor([])
+    driver, session = _session(tmp_path, executor)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        turn = pool.submit(session.run_turn, AgentTurnRequest("work forever"))
+        assert started.wait(timeout=2)
+        session.close()
+        with pytest.raises(concurrent.futures.CancelledError):
+            turn.result(timeout=2)
+
+    assert finalized.is_set()
+    driver.close()
+    assert executor.close_calls == 1
+
+
+def test_close_drains_blocking_default_executor_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(driver_subject, "_SESSION_SHUTDOWN_TIMEOUT", 0.01)
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    close_finished = threading.Event()
+
+    class ThreadedExecutor(_FakeExecutor):
+        def run_turn(self, *_args: object, **_kwargs: object):  # noqa: ANN202
+            async def stream():  # noqa: ANN202
+                def block() -> None:
+                    worker_started.set()
+                    release_worker.wait(timeout=2)
+
+                await asyncio.to_thread(block)
+                if False:
+                    yield None
+
+            return stream()
+
+    executor = ThreadedExecutor([])
+    driver, session = _session(tmp_path, executor)
+    turn_thread = threading.Thread(target=lambda: _ignore_cancelled_turn(session))
+    turn_thread.start()
+    assert worker_started.wait(timeout=2)
+    close_thread = threading.Thread(target=lambda: (session.close(), close_finished.set()))
+    close_thread.start()
+
+    assert not close_finished.wait(timeout=0.05)
+    assert session in driver._sessions  # noqa: SLF001
+    release_worker.set()
+    close_thread.join(timeout=2)
+    turn_thread.join(timeout=2)
+
+    assert close_finished.is_set()
+    assert not close_thread.is_alive()
+    assert not turn_thread.is_alive()
+    driver.close()
+    assert executor.close_calls == 1
+
+
+@pytest.mark.parametrize("failure", ["start", "ready"])
+def test_session_setup_failure_closes_executor_scratch_and_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    monkeypatch.setattr(driver_subject, "_SESSION_SHUTDOWN_TIMEOUT", 0.01)
+    executor = _FakeExecutor([])
+    driver = OmnigentDriver()
+    scratch_cleanups = 0
+
+    class Scratch:
+        def cleanup(self) -> None:
+            nonlocal scratch_cleanups
+            scratch_cleanups += 1
+
+    def build(_spec: AgentSessionSpec) -> tuple[_FakeExecutor, list[dict[str, Any]]]:
+        scratch: Any = Scratch()
+        driver._executor_scratch[id(executor)] = scratch  # noqa: SLF001
+        return executor, []
+
+    monkeypatch.setattr(driver, "_build_executor", build)
+    created_loops: list[asyncio.AbstractEventLoop] = []
+    new_event_loop = asyncio.new_event_loop
+
+    def capture_loop() -> asyncio.AbstractEventLoop:
+        loop = new_event_loop()
+        created_loops.append(loop)
+        return loop
+
+    monkeypatch.setattr(driver_subject.asyncio, "new_event_loop", capture_loop)
+    if failure == "start":
+
+        def fail_start(_thread: threading.Thread) -> None:
+            raise RuntimeError("thread start failed")  # noqa: TRY003  # test sentinel
+
+        monkeypatch.setattr(driver_subject.threading.Thread, "start", fail_start)
+        error = "thread start failed"
+    else:
+        monkeypatch.setattr(OmnigentSession, "_serve_loop", lambda _self: None)
+        error = "event loop did not start"
+
+    with pytest.raises(RuntimeError, match=error):
+        driver.create_session(_spec(tmp_path))
+
+    assert executor.close_calls == 1
+    assert scratch_cleanups == 1
+    assert len(created_loops) == 1
+    assert created_loops[0].is_closed()
+    assert driver._sessions == set()  # noqa: SLF001
+    driver.close()
+
+
+def _ignore_cancelled_turn(session: OmnigentSession) -> None:
+    with contextlib.suppress(concurrent.futures.CancelledError):
+        session.run_turn(AgentTurnRequest("use a worker"))
+
+
+def test_concurrent_session_close_callers_receive_base_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver, session = _session(tmp_path, _FakeExecutor([]))
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+
+    def fail_cleanup(_active: concurrent.futures.Future[Any] | None) -> None:
+        cleanup_started.set()
+        assert release_cleanup.wait(timeout=2)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(session, "_close_resources", fail_cleanup)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(session.close)
+        assert cleanup_started.wait(timeout=2)
+        waiter = pool.submit(session.close)
+        release_cleanup.set()
+        for future in (owner, waiter):
+            with pytest.raises(KeyboardInterrupt):
+                future.result(timeout=2)
+
+    assert session._close_finished.is_set()  # noqa: SLF001
+    driver._sessions.clear()  # noqa: SLF001
+    driver.close()
+
+
+def test_independent_sessions_overlap_and_clean_up_their_own_loops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    barrier = threading.Barrier(2)
+    active_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    class OverlappingExecutor(_FakeExecutor):
+        def __init__(self, answer: str) -> None:
+            super().__init__([])
+            self.answer = answer
+
+        def run_turn(self, *_args: object, **_kwargs: object):  # noqa: ANN202
+            async def stream():  # noqa: ANN202
+                nonlocal active, maximum_active
+                with active_lock:
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                try:
+                    barrier.wait(timeout=2)
+                    await asyncio.sleep(0)
+                    yield TurnComplete(response=self.answer)
+                finally:
+                    with active_lock:
+                        active -= 1
+
+            return stream()
+
+    driver = OmnigentDriver()
+    executors = [OverlappingExecutor("optimizer"), OverlappingExecutor("chat")]
+    remaining = iter(executors)
+    monkeypatch.setattr(driver, "_build_executor", lambda _spec: (next(remaining), []))
+    sessions = [driver.create_session(_spec(tmp_path)) for _ in executors]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(session.run_turn, AgentTurnRequest("work")) for session in sessions]
+        results = [future.result(timeout=3) for future in futures]
+
+    assert [result.text for result in results] == ["optimizer", "chat"]
+    assert maximum_active == 2
+    assert active == 0
+
+    driver.close()
+    assert [executor.close_calls for executor in executors] == [1, 1]
+    assert all(session._loop.is_closed() for session in sessions)  # noqa: SLF001
+    assert driver._sessions == set()  # noqa: SLF001
+
+
+def test_driver_close_continues_after_cleanup_base_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCloseExecutor(_FakeExecutor):
+        async def close(self) -> None:
+            self.close_calls += 1
+            raise KeyboardInterrupt
+
+    driver = OmnigentDriver()
+    executors = [FailingCloseExecutor([]), _FakeExecutor([])]
+    remaining = iter(executors)
+    monkeypatch.setattr(driver, "_build_executor", lambda _spec: (next(remaining), []))
+    sessions = [driver.create_session(_spec(tmp_path)) for _ in executors]
+
+    with pytest.raises(KeyboardInterrupt):
+        driver.close()
+
+    assert [executor.close_calls for executor in executors] == [1, 1]
+    assert all(session._loop.is_closed() for session in sessions)  # noqa: SLF001
+    assert driver._sessions == set()  # noqa: SLF001
+
+
+def test_concurrent_driver_close_callers_receive_base_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _FakeExecutor([])
+    driver, session = _session(tmp_path, executor)
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    original_close = session.close
+
+    def fail_close() -> None:
+        cleanup_started.set()
+        assert release_cleanup.wait(timeout=2)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(session, "close", fail_close)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(driver.close)
+        assert cleanup_started.wait(timeout=2)
+        waiter = pool.submit(driver.close)
+        release_cleanup.set()
+        for future in (owner, waiter):
+            with pytest.raises(KeyboardInterrupt):
+                future.result(timeout=2)
+
+    assert driver._close_finished.is_set()  # noqa: SLF001
+    original_close()
+    assert executor.close_calls == 1
+
+
+def test_driver_close_waits_for_in_flight_session_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_started = threading.Event()
+    release_build = threading.Event()
+    close_finished = [threading.Event(), threading.Event()]
+    executor = _FakeExecutor([])
+    driver = OmnigentDriver()
+
+    def build(_spec: AgentSessionSpec) -> tuple[_FakeExecutor, list[dict[str, Any]]]:
+        build_started.set()
+        assert release_build.wait(timeout=2)
+        return executor, []
+
+    monkeypatch.setattr(driver, "_build_executor", build)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        creation = pool.submit(driver.create_session, _spec(tmp_path))
+        assert build_started.wait(timeout=2)
+        closing = pool.submit(lambda: (driver.close(), close_finished[0].set()))
+        while True:
+            with driver._lifecycle:  # noqa: SLF001
+                if driver._closed:  # noqa: SLF001
+                    break
+        second_closing = pool.submit(lambda: (driver.close(), close_finished[1].set()))
+        assert not close_finished[0].wait(timeout=0.05)
+        assert not close_finished[1].wait(timeout=0.05)
+        release_build.set()
+        with pytest.raises(RuntimeError, match="closed"):
+            creation.result(timeout=2)
+        closing.result(timeout=2)
+        second_closing.result(timeout=2)
+
+    assert all(finished.is_set() for finished in close_finished)
+    assert executor.close_calls == 1
+    assert driver._sessions == set()  # noqa: SLF001
 
 
 @pytest.mark.parametrize(
@@ -397,11 +957,15 @@ def test_os_policy_masks_declared_non_dot_and_nested_paths(tmp_path: Path) -> No
     spec = driver._build_os_env(  # noqa: SLF001
         _spec(tmp_path, policy=AgentExecutionPolicy(project_paths=policy))
     )
-    _, dispatch = _build_os_tools(spec, tmp_path)
+    _, dispatch, os_environments = _build_os_tools(spec, tmp_path)
 
-    public = asyncio.run(dispatch("sys_os_read", {"path": "public.txt"}))
-    hidden = asyncio.run(dispatch("sys_os_read", {"path": "agent.toml"}))
-    nested = asyncio.run(dispatch("sys_os_read", {"path": "config/secret"}))
+    try:
+        public = asyncio.run(dispatch("sys_os_read", {"path": "public.txt"}))
+        hidden = asyncio.run(dispatch("sys_os_read", {"path": "agent.toml"}))
+        nested = asyncio.run(dispatch("sys_os_read", {"path": "config/secret"}))
+    finally:
+        for os_environment in os_environments:
+            os_environment.close()
 
     assert "public-4417" in str(public)
     assert "secret-9913" not in str(hidden)
@@ -436,9 +1000,9 @@ def test_codex_executor_disables_native_tools(
         _workspace: Path,
         environment: dict[str, str],
         _shell_os_env: object,
-    ) -> tuple[list[dict[str, Any]], object]:
+    ) -> tuple[list[dict[str, Any]], object, tuple[Any, ...]]:
         captured["tool_environment"] = environment
-        return [], lambda _name, _args: None
+        return [], lambda _name, _args: None, ()
 
     monkeypatch.setattr(
         "vibesys.agents.drivers.omnigent._build_os_tools",

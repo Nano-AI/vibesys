@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import json
 import os
+import re
+import shlex
 import sys
 import tempfile
+import threading
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +48,28 @@ _TOOL_EXECUTOR_ATTR = "_tool_executor"
 
 _OMNIGENT_INTERNAL_HIDDEN = frozenset({".codex-tmp"})
 """Runtime-owned workspace paths that OS tools must not traverse."""
+
+_ENVIRONMENT_MISSING = object()
+_ENVIRONMENT_OVERRIDE_LOCK = threading.Lock()
+_ENVIRONMENT_OVERRIDES: dict[str, tuple[object, str, int]] = {}
+"""Reference-counted process-environment values used by subprocesses."""
+
+_SESSION_ENVIRONMENT_LOCK = threading.Lock()
+_session_environment: tuple[dict[str, str], int] | None = None
+"""Complete environment-map lease shared by concurrent top-level turns."""
+
+_SESSION_SHUTDOWN_TIMEOUT = 5.0
+_SHELL_ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _unwrap_turn(
+    outcome: tuple[AgentTurnResult | None, BaseException | None],
+) -> AgentTurnResult:
+    result, error = outcome
+    if error is not None:
+        raise error
+    assert result is not None  # noqa: S101  # paired result/error contract
+    return result
 
 
 class OmnigentDriverError(RuntimeError):
@@ -83,18 +109,68 @@ def _sandbox_backend_for_platform() -> str:
 
 @contextlib.contextmanager
 def _patched_environ(overrides: dict[str, str]) -> Generator[None]:
-    """Temporarily expose session environment values to Omnigent subprocesses."""
-    sentinel = object()
-    previous: dict[str, object] = {key: os.environ.get(key, sentinel) for key in overrides}
-    os.environ.update(overrides)
+    """Expose compatible values until their final concurrent user exits."""
+    with _ENVIRONMENT_OVERRIDE_LOCK:
+        conflicts = sorted(
+            key
+            for key, value in overrides.items()
+            if key in _ENVIRONMENT_OVERRIDES and _ENVIRONMENT_OVERRIDES[key][1] != value
+        )
+        if conflicts:
+            names = ", ".join(conflicts)
+            raise OmnigentDriverError(
+                f"Concurrent Omnigent sessions requested conflicting environment values: {names}"
+            )
+        for key, value in overrides.items():
+            active = _ENVIRONMENT_OVERRIDES.get(key)
+            if active is None:
+                previous = os.environ.get(key, _ENVIRONMENT_MISSING)
+                os.environ[key] = value
+                _ENVIRONMENT_OVERRIDES[key] = (previous, value, 1)
+            else:
+                previous, active_value, users = active
+                _ENVIRONMENT_OVERRIDES[key] = (previous, active_value, users + 1)
     try:
         yield
     finally:
-        for key, old in previous.items():
-            if old is sentinel:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = str(old)
+        with _ENVIRONMENT_OVERRIDE_LOCK:
+            for key in overrides:
+                previous, value, users = _ENVIRONMENT_OVERRIDES[key]
+                if users > 1:
+                    _ENVIRONMENT_OVERRIDES[key] = (previous, value, users - 1)
+                else:
+                    del _ENVIRONMENT_OVERRIDES[key]
+                    if previous is _ENVIRONMENT_MISSING:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = str(previous)
+
+
+@contextlib.contextmanager
+def _leased_session_environment(overrides: dict[str, str]) -> Generator[None]:
+    """Require concurrent turns to agree on their complete environment map."""
+    global _session_environment  # noqa: PLW0603
+    with _SESSION_ENVIRONMENT_LOCK:
+        active = _session_environment
+        if active is not None and active[0] != overrides:
+            active_values = active[0]
+            conflicts = sorted(
+                key
+                for key in active_values.keys() | overrides.keys()
+                if active_values.get(key) != overrides.get(key)
+            )
+            names = ", ".join(conflicts)
+            raise OmnigentDriverError(
+                f"Concurrent Omnigent turns requested conflicting environment values: {names}"
+            )
+        _session_environment = (dict(overrides), 1 if active is None else active[1] + 1)
+    try:
+        yield
+    finally:
+        with _SESSION_ENVIRONMENT_LOCK:
+            assert _session_environment is not None  # noqa: S101  # context ownership
+            values, users = _session_environment
+            _session_environment = None if users == 1 else (values, users - 1)
 
 
 def _flatten_tool_schema(tool: Any) -> dict[str, Any]:  # noqa: ANN401
@@ -106,12 +182,29 @@ def _flatten_tool_schema(tool: Any) -> dict[str, Any]:  # noqa: ANN401
     }
 
 
-def _build_os_tools(
+def _shell_command_with_environment(command: str, environment: dict[str, str]) -> str:
+    """Scope explicit environment values to one sandbox shell subprocess."""
+    invalid = sorted(key for key in environment if _SHELL_ENVIRONMENT_NAME.fullmatch(key) is None)
+    if invalid:
+        raise OmnigentDriverError(f"Invalid shell environment variable names: {invalid}")
+    if not environment:
+        return command
+    assignments = " ".join(
+        f"{key}={shlex.quote(value)}" for key, value in sorted(environment.items())
+    )
+    return f"export {assignments}; {command}"
+
+
+def _build_os_tools(  # noqa: C901  # construction cleans every partially-created helper
     os_env_spec: Any,  # noqa: ANN401
     workspace: Path,
     environment: dict[str, str] | None = None,
     shell_os_env_spec: Any | None = None,  # noqa: ANN401
-) -> tuple[list[dict[str, Any]], Callable[[str, dict[str, Any]], Any]]:
+) -> tuple[
+    list[dict[str, Any]],
+    Callable[[str, dict[str, Any]], Any],
+    tuple[Any, ...],
+]:
     """Build Omnigent's sandboxed filesystem tools and their dispatcher."""
     try:
         from omnigent.inner.os_env import create_os_environment  # noqa: PLC0415
@@ -132,18 +225,28 @@ def _build_os_tools(
             f"Omnigent could not create a sandboxed OS environment for {workspace}"
         )
 
-    tools = build_os_env_tools(os_env)
-    if shell_os_env_spec is not None:
-        shell_os_env = create_os_environment(shell_os_env_spec)
-        if shell_os_env is None:
-            raise OmnigentDriverError(
-                f"Omnigent could not create a sandboxed shell environment for {workspace}"
-            )
-        shell_tools = build_os_env_tools(shell_os_env)
-        shell_tool = next((tool for tool in shell_tools if tool.name() == "sys_os_shell"), None)
-        if shell_tool is None:  # pragma: no cover - guarded against Omnigent API drift
-            raise OmnigentDriverError("Omnigent did not provide its sys_os_shell tool")
-        tools = [shell_tool if tool.name() == "sys_os_shell" else tool for tool in tools]
+    resources = [os_env]
+    try:
+        tools = build_os_env_tools(os_env)
+        if shell_os_env_spec is not None:
+            shell_os_env = create_os_environment(shell_os_env_spec)
+            if shell_os_env is None:
+                raise OmnigentDriverError(  # noqa: TRY301
+                    f"Omnigent could not create a sandboxed shell environment for {workspace}"
+                )
+            resources.append(shell_os_env)
+            shell_tools = build_os_env_tools(shell_os_env)
+            shell_tool = next((tool for tool in shell_tools if tool.name() == "sys_os_shell"), None)
+            if shell_tool is None:  # pragma: no cover - guarded against Omnigent API drift
+                raise OmnigentDriverError(  # noqa: TRY301
+                    "Omnigent did not provide its sys_os_shell tool"
+                )
+            tools = [shell_tool if tool.name() == "sys_os_shell" else tool for tool in tools]
+    except BaseException:
+        for resource in resources:
+            with contextlib.suppress(BaseException):
+                resource.close()
+        raise
     by_name = {tool.name(): tool for tool in tools}
     schemas = [_flatten_tool_schema(tool) for tool in tools]
     context = ToolContext(task_id="vibesys", agent_id="vibesys", workspace=workspace)
@@ -154,12 +257,19 @@ def _build_os_tools(
             return {"error": f"unknown tool {name!r}"}
 
         def invoke() -> Any:  # noqa: ANN401
-            with _patched_environ(environment or {}):
-                return tool.invoke(json.dumps(args), context)
+            effective_args = args
+            if name == "sys_os_shell" and environment:
+                command = args.get("command")
+                if isinstance(command, str):
+                    effective_args = {
+                        **args,
+                        "command": _shell_command_with_environment(command, environment),
+                    }
+            return tool.invoke(json.dumps(effective_args), context)
 
         return await asyncio.to_thread(invoke)
 
-    return schemas, dispatch
+    return schemas, dispatch, tuple(resources)
 
 
 def _usage_from_mapping(usage: dict[str, Any]) -> AgentUsage:
@@ -268,8 +378,44 @@ class OmnigentSession:
         self._spec = spec
         self._executor = executor
         self._tool_schemas = tool_schemas
+        self._loop = asyncio.new_event_loop()
+        self._state_lock = threading.Lock()
+        self._turn_lock = threading.Lock()
+        self._loop_ready = threading.Event()
+        self._loop_thread = threading.Thread(
+            target=self._serve_loop,
+            name=f"vibesys-omnigent-{spec.role}",
+            daemon=True,
+        )
+        self._active_turn: (
+            concurrent.futures.Future[tuple[AgentTurnResult | None, BaseException | None]] | None
+        ) = None
+        self._close_finished = threading.Event()
+        self._close_error: BaseException | None = None
+        self._closing_thread: int | None = None
         self._closed = False
         self._failed = False
+        loop_thread_started = False
+        try:
+            self._loop_thread.start()
+            loop_thread_started = True
+            if not self._loop_ready.wait(timeout=_SESSION_SHUTDOWN_TIMEOUT):
+                raise RuntimeError(  # noqa: TRY301  # normalized below with resource cleanup
+                    "Omnigent session event loop did not start"
+                )
+        except BaseException as error:
+            if loop_thread_started:
+                with contextlib.suppress(BaseException):
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join()
+            if not self._loop_thread.is_alive():
+                with contextlib.suppress(BaseException):
+                    self._loop.close()
+            try:
+                self._driver.close_executor(self._executor)
+            except BaseException as cleanup_error:  # noqa: BLE001  # preserve setup error
+                error.add_note(f"Omnigent session setup cleanup also failed: {cleanup_error}")
+            raise
 
     def run_turn(
         self,
@@ -277,37 +423,182 @@ class OmnigentSession:
         observer: AgentObserver | None = None,
     ) -> AgentTurnResult:
         """Run one resumable Omnigent turn."""
-        if self._closed:
-            raise RuntimeError("Omnigent session is closed")
-        if self._failed:
-            raise RuntimeError("Omnigent session must be reset after a failed turn")
-
-        turn = _drive_turn(
-            self._executor,
-            request=request,
-            reasoning_effort=self._spec.reasoning_effort,
-            tool_schemas=self._tool_schemas,
-            observer=observer,
-        )
-        if request.timeout is not None:
-            turn = asyncio.wait_for(turn, timeout=request.timeout.total_seconds())
-        try:
-            with _patched_environ(dict(self._spec.environment)):
-                return self._driver.run_awaitable(turn)
-        except BaseException:
-            self._failed = True
-            raise
+        # A session is one provider conversation and remains sequential. Other
+        # sessions own other loops, so an experiment chat can run concurrently
+        # with the optimizer without racing one driver-global event loop.
+        with self._turn_lock:
+            with self._state_lock:
+                if self._closed:
+                    raise RuntimeError("Omnigent session is closed")
+                if self._failed:
+                    raise RuntimeError("Omnigent session must be reset after a failed turn")
+            try:
+                environment = dict(self._spec.environment)
+                with (
+                    _leased_session_environment(environment),
+                    _patched_environ(environment),
+                ):
+                    with self._state_lock:
+                        if self._closed:
+                            raise RuntimeError(  # noqa: TRY301
+                                "Omnigent session is closed"
+                            )
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._run_turn(request, observer),
+                            self._loop,
+                        )
+                        self._active_turn = future
+                    try:
+                        return _unwrap_turn(future.result())
+                    except BaseException:
+                        future.cancel()
+                        with contextlib.suppress(
+                            concurrent.futures.CancelledError,
+                            concurrent.futures.TimeoutError,
+                            Exception,
+                        ):
+                            future.result(timeout=_SESSION_SHUTDOWN_TIMEOUT)
+                        raise
+                    finally:
+                        with self._state_lock:
+                            if self._active_turn is future:
+                                self._active_turn = None
+            except BaseException:
+                with self._state_lock:
+                    self._failed = True
+                raise
 
     def close(self) -> None:
         """Release the executor exactly once."""
-        if self._closed:
+        active: concurrent.futures.Future[Any] | None = None
+        closing_thread: int | None = None
+        with self._state_lock:
+            if self._closed:
+                owner = False
+                closing_thread = self._closing_thread
+            else:
+                self._closed = True
+                self._closing_thread = threading.get_ident()
+                active = self._active_turn
+                owner = True
+        if not owner:
+            if closing_thread == threading.get_ident():
+                return
+            self._close_finished.wait()
+            if self._close_error is not None:
+                raise self._close_error
             return
-        self._closed = True
-        self._driver.release_session(self, self._executor)
+        first_error: BaseException | None = None
+        try:
+            first_error = self._close_resources(active)
+        except BaseException as exc:  # noqa: BLE001  # completion must still be signaled
+            first_error = exc
+        finally:
+            with self._state_lock:
+                self._close_error = first_error
+                self._close_finished.set()
+        if first_error is not None:
+            raise first_error
+
+    def _close_resources(  # noqa: C901  # cleanup must continue after every failure
+        self,
+        active: concurrent.futures.Future[Any] | None,
+    ) -> BaseException | None:
+        """Best-effort all resources and preserve the first cleanup failure."""
+        if active is not None:
+            active.cancel()
+
+        first_error: BaseException | None = None
+        try:
+            cleanup = asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+            try:
+                first_error = cleanup.result()
+            except BaseException as exc:  # noqa: BLE001
+                first_error = exc
+                cleanup.cancel()
+        except BaseException as exc:  # noqa: BLE001
+            first_error = exc
+        try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        except BaseException as exc:  # noqa: BLE001
+            if first_error is None:
+                first_error = exc
+        self._loop_thread.join()
+        if self._loop_thread.is_alive() and first_error is None:
+            first_error = RuntimeError("Omnigent session event loop did not stop")
+        if not self._loop_thread.is_alive():
+            try:
+                self._loop.close()
+            except BaseException as exc:  # noqa: BLE001
+                if first_error is None:
+                    first_error = exc
+        try:
+            self._driver.release_session(self, self._executor)
+        except BaseException as exc:  # noqa: BLE001
+            if first_error is None:
+                first_error = exc
+        return first_error
+
+    async def _run_turn(
+        self,
+        request: AgentTurnRequest,
+        observer: AgentObserver | None,
+    ) -> tuple[AgentTurnResult | None, BaseException | None]:
+        try:
+            turn = _drive_turn(
+                self._executor,
+                request=request,
+                reasoning_effort=self._spec.reasoning_effort,
+                tool_schemas=self._tool_schemas,
+                observer=observer,
+            )
+            if request.timeout is not None:
+                return (
+                    await asyncio.wait_for(turn, timeout=request.timeout.total_seconds()),
+                    None,
+                )
+            return await turn, None
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            # asyncio deliberately re-raises KeyboardInterrupt/SystemExit out
+            # of tasks. Encode it so it is re-raised on the invoking thread
+            # without terminating this session's loop thread.
+            return None, exc
+
+    async def _shutdown(self) -> BaseException | None:
+        """Cancel loop work and drain async resources before the loop closes."""
+        first_error: BaseException | None = None
+        current = asyncio.current_task()
+        pending = [task for task in asyncio.all_tasks() if task is not current]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            close = getattr(self._executor, "close", None)
+            if close is not None:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
+        except BaseException as exc:  # noqa: BLE001
+            first_error = exc
+        for cleanup in (self._loop.shutdown_asyncgens, self._loop.shutdown_default_executor):
+            try:
+                await cleanup()
+            except BaseException as exc:  # noqa: BLE001
+                if first_error is None:
+                    first_error = exc
+        return first_error
+
+    def _serve_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop_ready.set()
+        self._loop.run_forever()
 
 
 class OmnigentDriver:
-    """Create sandboxed Omnigent sessions and own their async event loop."""
+    """Create sandboxed Omnigent sessions and own their native resources."""
 
     _CAPABILITIES = AgentCapabilities(
         timeouts=True,
@@ -315,10 +606,15 @@ class OmnigentDriver:
     )
 
     def __init__(self) -> None:
-        """Create a driver with no live sessions or event loop."""
+        """Create a driver with no live sessions."""
         self._sessions: set[OmnigentSession] = set()
         self._executor_scratch: dict[int, tempfile.TemporaryDirectory[str]] = {}
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._executor_os_environments: dict[int, tuple[Any, ...]] = {}
+        self._lifecycle = threading.Condition()
+        self._creating_sessions = 0
+        self._close_finished = threading.Event()
+        self._close_error: BaseException | None = None
+        self._closing_thread: int | None = None
         self._closed = False
 
     @property
@@ -328,42 +624,68 @@ class OmnigentDriver:
 
     def create_session(self, spec: AgentSessionSpec) -> OmnigentSession:
         """Validate setup requirements and create a confined session."""
-        if self._closed:
-            raise RuntimeError("Omnigent driver is closed")
-        self._validate_spec(spec)
-        executor, schemas = self._build_executor(spec)
-        session = OmnigentSession(
-            driver=self,
-            spec=spec,
-            executor=executor,
-            tool_schemas=schemas,
-        )
-        self._sessions.add(session)
-        return session
-
-    def close(self) -> None:
-        """Close every outstanding session and the shared event loop."""
-        if self._closed:
-            return
-        self._closed = True
-        first_error: Exception | None = None
-        for session in tuple(self._sessions):
-            try:
+        with self._lifecycle:
+            if self._closed:
+                raise RuntimeError("Omnigent driver is closed")
+            self._creating_sessions += 1
+        try:
+            self._validate_spec(spec)
+            executor, schemas = self._build_executor(spec)
+            session = OmnigentSession(
+                driver=self,
+                spec=spec,
+                executor=executor,
+                tool_schemas=schemas,
+            )
+            with self._lifecycle:
+                closed = self._closed
+                if not closed:
+                    self._sessions.add(session)
+            if closed:
                 session.close()
-            except Exception as exc:  # noqa: BLE001
-                if first_error is None:
-                    first_error = exc
-        loop = self._loop
-        if loop is not None and not loop.is_closed():
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.run_until_complete(asyncio.sleep(0))
-            except Exception as exc:  # noqa: BLE001
-                if first_error is None:
-                    first_error = exc
-            finally:
-                loop.close()
-        self._loop = None
+                raise RuntimeError("Omnigent driver is closed")
+            return session
+        finally:
+            with self._lifecycle:
+                self._creating_sessions -= 1
+                self._lifecycle.notify_all()
+
+    def close(self) -> None:  # noqa: C901  # cleanup must signal after every failure
+        """Close every outstanding session."""
+        closing_thread: int | None = None
+        with self._lifecycle:
+            if self._closed:
+                owner = False
+                closing_thread = self._closing_thread
+            else:
+                self._closed = True
+                self._closing_thread = threading.get_ident()
+                owner = True
+        if not owner:
+            if closing_thread == threading.get_ident():
+                return
+            self._close_finished.wait()
+            if self._close_error is not None:
+                raise self._close_error
+            return
+        first_error: BaseException | None = None
+        try:
+            with self._lifecycle:
+                while self._creating_sessions > 0:
+                    self._lifecycle.wait()
+                sessions = tuple(self._sessions)
+            for session in sessions:
+                try:
+                    session.close()
+                except BaseException as exc:  # noqa: BLE001
+                    if first_error is None:
+                        first_error = exc
+        except BaseException as exc:  # noqa: BLE001  # completion must still be signaled
+            first_error = exc
+        finally:
+            with self._lifecycle:
+                self._close_error = first_error
+                self._close_finished.set()
         if first_error is not None:
             raise first_error
 
@@ -389,12 +711,8 @@ class OmnigentDriver:
             )
 
     def run_awaitable(self, awaitable: Any) -> Any:  # noqa: ANN401
-        """Run one Omnigent awaitable on the driver-owned event loop."""
-        loop = self._loop
-        if loop is None or loop.is_closed():
-            loop = asyncio.new_event_loop()
-            self._loop = loop
-        return loop.run_until_complete(awaitable)
+        """Run isolated cleanup that does not belong to a live session."""
+        return asyncio.run(awaitable)
 
     def _executor_class(self, spec: OmnigentExecutorSpec) -> type[Any]:
         try:
@@ -523,7 +841,7 @@ class OmnigentDriver:
                 "this integration requires the private Omnigent 0.10.0 tool-dispatch seam"
             )
         try:
-            schemas, dispatch = _build_os_tools(
+            schemas, dispatch, os_environments = _build_os_tools(
                 os_env_spec,
                 spec.workspace,
                 tool_environment,
@@ -535,15 +853,43 @@ class OmnigentDriver:
             scratch.cleanup()
             raise
         setattr(executor, _TOOL_EXECUTOR_ATTR, dispatch)
-        self._executor_scratch[id(executor)] = scratch
+        with self._lifecycle:
+            self._executor_scratch[id(executor)] = scratch
+            self._executor_os_environments[id(executor)] = os_environments
         return executor, schemas
 
-    def release_session(self, session: OmnigentSession, executor: Any) -> None:  # noqa: ANN401
-        """Forget a session and close its native executor."""
-        self._sessions.discard(session)
-        self.close_executor(executor)
+    def release_session(
+        self,
+        session: OmnigentSession,
+        executor: Any,  # noqa: ANN401
+    ) -> None:
+        """Forget a closed session and release its synchronous scratch state."""
+        with self._lifecycle:
+            self._sessions.discard(session)
+            scratch = self._executor_scratch.pop(id(executor), None)
+            os_environments = self._executor_os_environments.pop(id(executor), ())
+        first_error: BaseException | None = None
+        for os_environment in os_environments:
+            try:
+                os_environment.close()
+            except BaseException as exc:  # noqa: BLE001
+                if first_error is None:
+                    first_error = exc
+        if scratch is not None:
+            try:
+                scratch.cleanup()
+            except BaseException as exc:  # noqa: BLE001
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
-    def close_executor(self, executor: Any) -> None:  # noqa: ANN401
+    def close_executor(
+        self,
+        executor: Any,  # noqa: ANN401
+        *,
+        run_awaitable: Callable[[Any], Any] | None = None,
+    ) -> None:
         """Close a native executor, awaiting asynchronous cleanup when needed."""
         try:
             close = getattr(executor, "close", None)
@@ -551,8 +897,13 @@ class OmnigentDriver:
                 return
             result = close()
             if asyncio.iscoroutine(result):
-                self.run_awaitable(result)
+                (run_awaitable or self.run_awaitable)(result)
         finally:
-            scratch = self._executor_scratch.pop(id(executor), None)
+            with self._lifecycle:
+                scratch = self._executor_scratch.pop(id(executor), None)
+                os_environments = self._executor_os_environments.pop(id(executor), ())
+            for os_environment in os_environments:
+                with contextlib.suppress(BaseException):
+                    os_environment.close()
             if scratch is not None:
                 scratch.cleanup()
