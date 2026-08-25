@@ -267,9 +267,9 @@ describe('OpenTUI presentation', () => {
     const filtered = await frameAfter(testRenderer);
     expect(filtered).toContain('edited the kernel');
     expect(filtered).not.toContain('checking the diff');
-    // The selected implementer is complete, so the stable status line still
-    // reports the judge that is actually active.
-    expect(filtered).toContain('Judge · Checking the diff');
+    // A completed filtered transcript must not inherit another agent's live
+    // activity. The global summary remains available on the experiment log.
+    expect(filtered).not.toContain('Judge · Checking the diff');
   });
 
   it('summarizes concurrent executions and disappears when they finish', async () => {
@@ -314,6 +314,105 @@ describe('OpenTUI presentation', () => {
     const finished = await frameAfter(testRenderer);
     expect(finished).not.toContain('agents active');
     expect(finished).not.toContain('Running queue tests');
+  });
+
+  it('shows activity when an execution starts after its agent conversation is opened', async () => {
+    const testRenderer = await createTestRenderer({width: 100, height: 20});
+    const controller = new FakeController({
+      ...initialSessionState(),
+      rounds: [{number: 1, status: 'active'}],
+      phases: [
+        {
+          kind: 'implementer',
+          status: 'pending',
+          roundNumber: 1,
+          roundLabel: 'round-1-implementer',
+        },
+      ],
+      selectedRound: 1,
+      selectedAgentKind: 'implementer',
+      conversation: [
+        {
+          id: 'prompt',
+          kind: 'prompt',
+          content: 'Implement the queue',
+          agentKind: 'implementer',
+          roundNumber: 1,
+        },
+      ],
+    });
+    const app = createOpenTuiApp(testRenderer.renderer, controller);
+    registerCleanup(testRenderer.renderer, app);
+    const idle = await testRenderer.waitForFrame(value => value.includes('Implement the queue'));
+    expect(idle).not.toContain('Implementer · Editing the queue');
+
+    controller.publish({
+      ...controller.state,
+      activeExecutions: {
+        'impl-1': {
+          executionId: 'impl-1',
+          agentKind: 'implementer',
+          roundLabel: 'round-1-implementer',
+          roundNumber: 1,
+          stage: 'implementation',
+          attempt: 1,
+          assignment: 'Implement the queue',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'responding', summary: 'Editing the queue'},
+        },
+      },
+    });
+
+    const active = await testRenderer.waitForFrame(value =>
+      value.includes('Implementer · Editing the queue'),
+    );
+    expect(active).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Implementer · Editing the queue · \d+s/);
+    const activityLine = active
+      .split('\n')
+      .find(line => line.includes('Implementer · Editing the queue'));
+    expect(activityLine?.indexOf('Implementer')).toBeGreaterThan(20);
+    const lines = active.split('\n');
+    const promptLine = lines.findIndex(line => line.includes('Implement the queue'));
+    const activityLineIndex = lines.findIndex(line =>
+      line.includes('Implementer · Editing the queue'),
+    );
+    const helpLine = lines.findIndex(line => line.includes('[/]: round'));
+    expect(activityLineIndex).toBeGreaterThan(promptLine);
+    expect(activityLineIndex).toBeLessThan(helpLine);
+
+    controller.selectAgent('implementer');
+    await frameAfter(testRenderer);
+    controller.selectAgent('implementer');
+    const reopened = await frameAfter(testRenderer);
+    expect(reopened).toContain('Implementer · Editing the queue');
+  });
+
+  it('keeps the global activity summary on the hypothesis log', async () => {
+    const testRenderer = await createTestRenderer({width: 100, height: 20});
+    const controller = new FakeController({
+      ...initialSessionState(),
+      activeExecutions: {
+        'impl-1': {
+          executionId: 'impl-1',
+          agentKind: 'implementer',
+          roundLabel: 'round-1-implementer',
+          roundNumber: 1,
+          stage: 'implementation',
+          attempt: 1,
+          assignment: 'Implement the queue',
+          startedAt: new Date().toISOString(),
+          activity: {mode: 'responding', summary: 'Editing the queue'},
+        },
+      },
+    });
+    controller.publish({...controller.state, experimentLog: initialSessionState().experimentLog});
+    const app = createOpenTuiApp(testRenderer.renderer, controller);
+    registerCleanup(testRenderer.renderer, app);
+
+    const frame = await testRenderer.waitForFrame(value =>
+      value.includes('Implementer · Editing the queue'),
+    );
+    expect(frame).toContain('Experiments');
   });
 
   it('shows the whole run in the strip and keeps early rounds reachable', async () => {

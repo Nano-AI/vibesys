@@ -1,9 +1,11 @@
 import {type CliRenderer, TextRenderable} from '@opentui/core';
 import type {ActiveAgentExecution, SessionState} from '../session-model.js';
+import {visibleRoundNumber} from '../session-model.js';
 import type {Theme} from './theme.js';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_INTERVAL_MS = 120;
+export type ActivityBarScope = 'global' | 'conversation';
 
 /** Stable, selection-aware status line for backend-authoritative execution activity. */
 export class ActivityBarView {
@@ -12,9 +14,9 @@ export class ActivityBarView {
   #frame = 0;
   #timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(renderer: CliRenderer, theme: Theme) {
+  constructor(renderer: CliRenderer, theme: Theme, id = 'activity-bar') {
     this.output = new TextRenderable(renderer, {
-      id: 'activity-bar',
+      id,
       height: 1,
       width: '100%',
       wrapMode: 'none',
@@ -25,18 +27,18 @@ export class ActivityBarView {
     });
   }
 
-  render(state: SessionState): void {
+  render(state: SessionState, scope: ActivityBarScope, visible = true): void {
     const all = Object.values(state.activeExecutions);
-    const selected = all.filter(execution => {
-      if (state.selectedRound !== null && execution.roundNumber !== state.selectedRound)
-        return false;
-      if (state.selectedAgentKind !== null && execution.agentKind !== state.selectedAgentKind)
-        return false;
-      return true;
-    });
-    // Selection gives relevant active work priority. When that selection is
-    // completed, still report other work rather than making the run look idle.
-    this.#executions = selected.length > 0 ? selected : all;
+    const roundNumber = visibleRoundNumber(state);
+    this.#executions = visible
+      ? scope === 'global'
+        ? all
+        : all.filter(
+            execution =>
+              (roundNumber === null || execution.roundNumber === roundNumber) &&
+              (state.selectedAgentKind === null || execution.agentKind === state.selectedAgentKind),
+          )
+      : [];
     this.output.visible = this.#executions.length > 0;
     this.#refresh();
     this.#syncTimer();

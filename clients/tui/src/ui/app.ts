@@ -106,13 +106,21 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   const todoStrip = new TodoStripView(renderer, controller, theme);
   const errorBanner = new ErrorBannerView(renderer, theme);
   const agentMap = new AgentMapView(renderer, controller, theme);
-  const activityBar = new ActivityBarView(renderer, theme);
+  const globalActivityBar = new ActivityBarView(renderer, theme, 'global-activity-bar');
+  const conversationActivityBar = new ActivityBarView(renderer, theme, 'conversation-activity-bar');
   const overlay = new OverlayView(renderer, theme);
   const experimentLog = new ExperimentLogView(renderer, controller, theme);
   const rightPane = new RightPaneView(renderer, theme);
   const themePicker = new ThemePickerView(renderer, theme);
   const conversation = new ConversationView(renderer, controller, markdownStyle, theme, {
     showsSelection: true,
+  });
+  const transcriptColumn = new BoxRenderable(renderer, {
+    id: 'transcript-column',
+    width: 'auto',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'column',
   });
   const chat = new ChatOverlayView(renderer, controller, markdownStyle, theme);
   const chatPane = new ChatPaneView(renderer, controller, markdownStyle, theme);
@@ -166,11 +174,13 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   // request, the transcript decides which prompt it applies to.
   controller.onTogglePrompt(() => conversation.toggleLatestPrompt());
   viewport.add(conversation.output);
+  transcriptColumn.add(viewport);
+  transcriptColumn.add(conversationActivityBar.output);
   main.add(agentMap.output);
   // The chat is the leftmost column of the landing view, so it is added before
   // the surfaces it sits beside.
   main.add(chatPane.output);
-  main.add(viewport);
+  main.add(transcriptColumn);
   // The log lives in the main pane rather than floating over it: it is the
   // landing view, not a dialog.
   main.add(experimentLog.output);
@@ -189,7 +199,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
   root.add(roundStrip.output);
   root.add(main);
   root.add(todoStrip.output);
-  root.add(activityBar.output);
+  root.add(globalActivityBar.output);
   root.add(bottom);
   root.add(overlay.output);
   root.add(themePicker.output);
@@ -210,7 +220,8 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     todoStrip.applyTheme(theme);
     errorBanner.applyTheme(theme);
     agentMap.applyTheme(theme);
-    activityBar.applyTheme(theme);
+    globalActivityBar.applyTheme(theme);
+    conversationActivityBar.applyTheme(theme);
     overlay.applyTheme(theme);
     experimentLog.applyTheme(theme);
     rightPane.applyTheme(theme);
@@ -272,6 +283,7 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     // hypothesis trajectory, not to the list of claims.
     agentMap.output.visible = !showLog;
     viewport.visible = !showLog;
+    transcriptColumn.visible = !showLog;
     roundStrip.output.visible = !showLog;
     todoStrip.output.visible = !showLog;
     if (!showLog) {
@@ -338,7 +350,8 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
     );
     themePicker.render(state);
     chat.render(state);
-    activityBar.render(state);
+    globalActivityBar.render(state, 'global', showLog);
+    conversationActivityBar.render(state, 'conversation', !showLog);
     // One cursor, three places it can be. The modal owns it while it is open;
     // otherwise it belongs to whichever input the pane focus points at.
     const target: FocusTarget = state.chatOpen ? 'modal' : chatInputFocused ? 'chat' : 'command';
@@ -385,7 +398,8 @@ export function createOpenTuiApp(renderer: CliRenderer, controller: SessionContr
       input.destroy();
       chatInput.destroy();
       chat.destroy();
-      activityBar.destroy();
+      globalActivityBar.destroy();
+      conversationActivityBar.destroy();
       roundStrip.destroy();
       agentMap.destroy();
       experimentLog.destroy();
