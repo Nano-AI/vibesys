@@ -253,8 +253,8 @@ describe('OpenTUI presentation', () => {
     // A phase is running, but individual turn cards do not claim ownership of
     // that activity because the transcript may be filtered to another agent.
     const live = await testRenderer.waitForFrame(value => value.includes('checking the diff'));
-    expect(live).not.toContain('Working');
-    expect(live).toContain('Judge · Checking the diff');
+    expect(live).toContain('Judge · Working');
+    expect(live).not.toContain('Judge · Checking the diff');
 
     // Arrows put a cursor on an entry without touching the input.
     testRenderer.mockInput.pressKey('ARROW_UP');
@@ -268,8 +268,8 @@ describe('OpenTUI presentation', () => {
     expect(filtered).toContain('edited the kernel');
     expect(filtered).not.toContain('checking the diff');
     // A completed filtered transcript must not inherit another agent's live
-    // activity. The global summary remains available on the experiment log.
-    expect(filtered).not.toContain('Judge · Checking the diff');
+    // activity. The global working indicator remains available on the experiment log.
+    expect(filtered).not.toContain('Judge · Working');
   });
 
   it('summarizes concurrent executions and disappears when they finish', async () => {
@@ -307,8 +307,10 @@ describe('OpenTUI presentation', () => {
     registerCleanup(testRenderer.renderer, app);
 
     const active = await testRenderer.waitForFrame(value => value.includes('2 agents active'));
-    expect(active).toContain('Implementer: Running queue tests');
-    expect(active).toContain('Reviewer: Inspecting the diff');
+    expect(active).toContain('Implementer: Working');
+    expect(active).toContain('Reviewer: Working');
+    expect(active).not.toContain('Running queue tests');
+    expect(active).not.toContain('Inspecting the diff');
 
     controller.publish({...controller.state, activeExecutions: {}});
     const finished = await frameAfter(testRenderer);
@@ -344,7 +346,7 @@ describe('OpenTUI presentation', () => {
     const app = createOpenTuiApp(testRenderer.renderer, controller);
     registerCleanup(testRenderer.renderer, app);
     const idle = await testRenderer.waitForFrame(value => value.includes('Implement the queue'));
-    expect(idle).not.toContain('Implementer · Editing the queue');
+    expect(idle).not.toContain('Implementer · Working');
 
     controller.publish({
       ...controller.state,
@@ -364,18 +366,15 @@ describe('OpenTUI presentation', () => {
     });
 
     const active = await testRenderer.waitForFrame(value =>
-      value.includes('Implementer · Editing the queue'),
+      value.includes('Implementer · Working'),
     );
-    expect(active).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Implementer · Editing the queue · \d+s/);
-    const activityLine = active
-      .split('\n')
-      .find(line => line.includes('Implementer · Editing the queue'));
+    expect(active).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Implementer · Working · \d+s/);
+    expect(active).not.toContain('Editing the queue');
+    const activityLine = active.split('\n').find(line => line.includes('Implementer · Working'));
     expect(activityLine?.indexOf('Implementer')).toBeGreaterThan(20);
     const lines = active.split('\n');
     const promptLine = lines.findIndex(line => line.includes('Implement the queue'));
-    const activityLineIndex = lines.findIndex(line =>
-      line.includes('Implementer · Editing the queue'),
-    );
+    const activityLineIndex = lines.findIndex(line => line.includes('Implementer · Working'));
     const helpLine = lines.findIndex(line => line.includes('[/]: round'));
     const viewportBottomBorder = lines.findIndex(
       (line, index) =>
@@ -396,7 +395,7 @@ describe('OpenTUI presentation', () => {
     await frameAfter(testRenderer);
     controller.selectAgent('implementer');
     const reopened = await frameAfter(testRenderer);
-    expect(reopened).toContain('Implementer · Editing the queue');
+    expect(reopened).toContain('Implementer · Working');
   });
 
   it('keeps activity fixed while a new turn changes the scroll height', async () => {
@@ -464,12 +463,14 @@ describe('OpenTUI presentation', () => {
     const frame = testRenderer.renderer.root.findDescendantById('viewport');
     const scroll = testRenderer.renderer.root.findDescendantById('transcript-scroll');
     const activity = testRenderer.renderer.root.findDescendantById('conversation-activity-bar');
+    if (frame === undefined || activity === undefined)
+      throw new Error('transcript frame was missing');
     if (!(scroll instanceof ScrollBoxRenderable)) throw new Error('transcript was not scrollable');
     expect(scroll.parent).toBe(frame);
     expect(activity?.parent).toBe(frame);
   });
 
-  it('keeps the global activity summary on the hypothesis log', async () => {
+  it('keeps the global working indicator on the hypothesis log', async () => {
     const testRenderer = await createTestRenderer({width: 100, height: 20});
     const controller = new FakeController({
       ...initialSessionState(),
@@ -491,10 +492,9 @@ describe('OpenTUI presentation', () => {
     const app = createOpenTuiApp(testRenderer.renderer, controller);
     registerCleanup(testRenderer.renderer, app);
 
-    const frame = await testRenderer.waitForFrame(value =>
-      value.includes('Implementer · Editing the queue'),
-    );
+    const frame = await testRenderer.waitForFrame(value => value.includes('Implementer · Working'));
     expect(frame).toContain('Experiments');
+    expect(frame).not.toContain('Editing the queue');
   });
 
   it('shows the whole run in the strip and keeps early rounds reachable', async () => {

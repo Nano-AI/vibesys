@@ -84,34 +84,13 @@ export class ActivityBarView {
   }
 }
 
-export function activitySummary(execution: ActiveAgentExecution): string {
-  const summary = execution.activity.summary.trim();
-  if (
-    execution.activity.mode === 'thinking' &&
-    (summary === '' || /^thinking(?:\.\.\.|\u2026)?$/i.test(summary))
-  ) {
-    return 'Working';
-  }
-  if (summary !== '') return summary;
-  if (execution.activity.mode === 'tool' && execution.activity.tool) {
-    return `Using ${execution.activity.tool}`;
-  }
-  return modeLabel(execution.activity.mode);
+export function activitySummary(_execution: ActiveAgentExecution): string {
+  return 'Working';
 }
 
 function roleLabel(role: string): string {
   if (role === '') return 'Agent';
   return role.charAt(0).toUpperCase() + role.slice(1).replaceAll('_', ' ');
-}
-
-function modeLabel(mode: ActiveAgentExecution['activity']['mode']): string {
-  const labels: Record<typeof mode, string> = {
-    thinking: 'Working',
-    responding: 'Responding',
-    tool: 'Using a tool',
-    waiting: 'Waiting',
-  };
-  return labels[mode];
 }
 
 function elapsed(startedAt: string, nowMs: number): string {

@@ -21,22 +21,17 @@ function execution(
 }
 
 describe('activity summary', () => {
-  it('uses Working for generic thinking activity', () => {
+  it('uses Working for every activity update', () => {
     expect(activitySummary(execution({mode: 'thinking', summary: ''}))).toBe('Working');
-    expect(activitySummary(execution({mode: 'thinking', summary: 'Thinking'}))).toBe('Working');
-    expect(activitySummary(execution({mode: 'thinking', summary: 'Thinking...'}))).toBe('Working');
-    expect(activitySummary(execution({mode: 'thinking', summary: 'Thinking…'}))).toBe('Working');
-  });
-
-  it('preserves specific semantic summaries and tool fallbacks', () => {
-    const planning = execution({mode: 'thinking', summary: 'Planning'});
-    const todo = execution({mode: 'thinking', summary: 'Reviewing queue invariants'});
-    const tool = execution({mode: 'tool', summary: 'Running queue tests', tool: 'Bash'});
-    const blankTool = execution({mode: 'tool', summary: '', tool: 'Bash'});
-
-    expect(activitySummary(planning)).toBe('Planning');
-    expect(activitySummary(todo)).toBe('Reviewing queue invariants');
-    expect(activitySummary(tool)).toBe('Running queue tests');
-    expect(activitySummary(blankTool)).toBe('Using Bash');
+    expect(activitySummary(execution({mode: 'thinking', summary: 'Planning'}))).toBe('Working');
+    expect(activitySummary(execution({mode: 'responding', summary: 'Writing a response'}))).toBe(
+      'Working',
+    );
+    expect(
+      activitySummary(execution({mode: 'tool', summary: 'Running queue tests', tool: 'Bash'})),
+    ).toBe('Working');
+    expect(activitySummary(execution({mode: 'waiting', summary: 'Waiting for output'}))).toBe(
+      'Working',
+    );
   });
 });
