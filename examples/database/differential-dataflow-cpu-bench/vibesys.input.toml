@@ -1,0 +1,23 @@
+version = 1
+
+[agent]
+domain = "database"
+
+[accuracy]
+command = [
+  "uv", "run", "python", "accuracy_checker/equivalence_gate.py",
+  "--engine-cmd", "engine/target/release/examples/bfs",
+  "--rebuild-cmd", "cargo build --release --example bfs -p differential-dataflow --offline --manifest-path engine/Cargo.toml",
+]
+timeout_seconds = 1800
+
+[benchmark]
+command = [
+  "uv", "run", "python", "benchmark/benchmark.py",
+  "--engine-cmd", "engine/target/release/examples/bfs",
+]
+timeout_seconds = 1800
+
+[benchmark.result]
+json_argument = "--output-json"
+metric = "cpu_reduction_ratio"
