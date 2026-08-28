@@ -247,6 +247,7 @@ function querySnapshot(socketPath: string): Promise<Record<string, unknown>> {
   });
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 async function monitor(
   frontend: ChildProcess,
   backend: ChildProcess,

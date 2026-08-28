@@ -1,3 +1,4 @@
+// biome-ignore lint/style/noExcessiveLinesPerFile: pre-existing; tracked: #288
 import {
   type EventSubscription,
   type ProtocolResponse,

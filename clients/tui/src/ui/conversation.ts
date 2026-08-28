@@ -195,6 +195,8 @@ export class ConversationView {
     return true;
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
+  // biome-ignore lint/complexity/noExcessiveLinesPerFunction: pre-existing; tracked: #288
   #renderEntry(entry: ConversationEntry): BoxRenderable {
     const palette = entryPalette(entry, this.#theme);
     const selected = this.#selectedId === entry.id;
@@ -326,6 +328,7 @@ export class ConversationView {
     }
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
   #renderToolTurn(card: BoxRenderable, entry: ConversationEntry): void {
     const toolCall =
       entry.toolName !== undefined && entry.toolArguments !== undefined

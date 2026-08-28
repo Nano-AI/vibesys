@@ -144,6 +144,7 @@ export class ExperimentLogView {
     this.#stopElapsedTimer();
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
   render(state: SessionState): void {
     const log = experimentLogVisible(state) ? state.experimentLog : null;
     if (log === null) {
@@ -227,6 +228,7 @@ export class ExperimentLogView {
         : '↑↓: select activity or recorded round · Enter: open';
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
   #renderTable(state: SessionState): void {
     const log = state.experimentLog;
     if (log === null) return;

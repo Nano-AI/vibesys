@@ -104,6 +104,7 @@ export class AgentMapView {
     this.#renderedState = null;
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
   render(state: SessionState, widthOverride?: number): void {
     const phases = visiblePhases(state);
     // The pane's width follows the terminal, so a resize has to redraw even
