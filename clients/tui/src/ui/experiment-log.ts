@@ -640,7 +640,8 @@ export function formatMeasured(entry: HypothesisEntry): string {
     const sign = delta > 0 ? '+' : '';
     return `${sign}${delta.toFixed(delta >= 10 || delta <= -10 ? 0 : 1)}%`;
   }
-  if (typeof entry.perf_metric === 'number') return `${trimNumber(entry.perf_metric)}${entry.perf_unit ? ` ${entry.perf_unit}` : ''}`; 
+  if (typeof entry.perf_metric === 'number')
+    return `${trimNumber(entry.perf_metric)}${entry.perf_unit ? ` ${entry.perf_unit}` : ''}`; 
   return '—';
 }
 
@@ -721,4 +722,3 @@ function truncate(value: string, width: number): string {
 function trimNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '');
 }
-

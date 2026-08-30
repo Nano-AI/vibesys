@@ -119,7 +119,9 @@ describe('experiment log rows', () => {
   it('falls back from a delta to an absolute metric and then to a placeholder', () => {
     expect(formatMeasured(entry({perf_delta_pct: -2}))).toBe('-2.0%');
     expect(formatMeasured(entry({perf_delta_pct: null, perf_metric: 2412.5}))).toBe('2412.5');
-    expect(formatMeasured(entry({perf_delta_pct: null, perf_metric: 2412.5, perf_unit: 'ops/s'}))).toBe('2412.5 ops/s');
+    expect(
+      formatMeasured(entry({perf_delta_pct: null, perf_metric: 2412.5, perf_unit: 'ops/s'})),
+    ).toBe('2412.5 ops/s');
     expect(formatMeasured(entry({perf_delta_pct: null, perf_metric: null}))).toBe('—');
   });
 
