@@ -103,7 +103,7 @@ export class ChatPaneView {
     this.#conversation = new ConversationView(renderer, controller, markdownStyle, theme, {
       selectConversation: state => state.chatConversation,
       emptyContent: 'Ask about this run: progress, a failure, or what a hypothesis changed.',
-      renderMarkdown: false,
+      renderMarkdown: true,
       onFocusRequest: () => controller.focusPane('chat'),
     });
     this.#composer = new ChatComposerView(
