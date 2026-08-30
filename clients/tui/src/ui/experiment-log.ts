@@ -641,7 +641,7 @@ export function formatMeasured(entry: HypothesisEntry): string {
     return `${sign}${delta.toFixed(delta >= 10 || delta <= -10 ? 0 : 1)}%`;
   }
   if (typeof entry.perf_metric === 'number')
-    return `${trimNumber(entry.perf_metric)}${entry.perf_unit ? ` ${entry.perf_unit}` : ''}`; 
+    return `${trimNumber(entry.perf_metric)}${entry.perf_unit ? ` ${entry.perf_unit}` : ''}`;
   return '—';
 }
 
