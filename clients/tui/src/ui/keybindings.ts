@@ -233,6 +233,8 @@ export function bindKeybindings(
         key.preventDefault();
         return;
       }
+      key.preventDefault();
+      return;
     }
     if (key.name === 'left' || key.name === 'right') {
       controller.focusRound(key.name === 'left' ? 'agents' : 'transcript');
