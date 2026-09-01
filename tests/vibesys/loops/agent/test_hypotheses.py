@@ -1,5 +1,6 @@
 """Tests for the unified hypothesis aggregate and its pure transitions."""
 
+from dataclasses import replace
 from typing import Literal
 
 import pytest
@@ -357,7 +358,6 @@ def test_resolution_and_retention_respect_objective_direction_and_noise() -> Non
             official_metric=90.0,
             baseline_metric=100.0,
             direction="max",
-            benchmark_expected=True,
         )
     )
     minimize = resolve_hypothesis_outcome(
@@ -368,7 +368,6 @@ def test_resolution_and_retention_respect_objective_direction_and_noise() -> Non
             official_metric=90.0,
             baseline_metric=100.0,
             direction="min",
-            benchmark_expected=True,
         )
     )
 
@@ -381,3 +380,48 @@ def test_resolution_and_retention_respect_objective_direction_and_noise() -> Non
         is False
     )
     assert scalar_candidate_retained(metric=90.0, direction="min", prior=[100.0]) is True
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [HypothesisOutcome.SUPPORTED, HypothesisOutcome.NOMINATED],
+)
+def test_supportive_declaration_without_measurement_resolves_unmeasured(
+    declared: HypothesisOutcome,
+) -> None:
+    resolution = resolve_hypothesis_outcome(
+        ResolutionEvidence(
+            declared=declared,
+            passed=True,
+            reviewed=True,
+            official_metric=None,
+            baseline_metric=None,
+            direction=None,
+        )
+    )
+
+    assert resolution is HypothesisResolution.UNMEASURED
+
+
+def test_implementer_reported_metric_never_proves_or_measures() -> None:
+    record = replace(_round(1, 100.0, hypothesis_id="H-1"), perf_provenance="implementer")
+    projected = project_round_evidence(
+        Hypothesis(hypothesis_id="H-1", plan=_plan("H-1"), started_round=1),
+        record,
+        prior_rounds=[],
+    )
+
+    assert projected.resolution is HypothesisResolution.UNMEASURED
+    assert projected.measurement is None
+
+
+def test_framework_provenance_still_measures_and_resolves() -> None:
+    record = replace(_round(1, 100.0, hypothesis_id="H-1"), perf_provenance="framework")
+    projected = project_round_evidence(
+        Hypothesis(hypothesis_id="H-1", plan=_plan("H-1"), started_round=1),
+        record,
+        prior_rounds=[],
+    )
+
+    assert projected.measurement is not None
+    assert projected.measurement.value == 100.0

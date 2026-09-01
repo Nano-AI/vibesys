@@ -618,7 +618,14 @@ def _provisional_candidates_since_official(records: list[RoundRecord]) -> int:
             and record.reviewed
             and (
                 _record_candidate_retained(record) is True
-                or record.hypothesis_outcome == HypothesisResolution.PROVEN.value
+                # An accepted-but-unmeasured hypothesis consumes cadence budget
+                # like a proven one: it is exactly the checkpoint the next
+                # official evaluation must measure.
+                or record.hypothesis_outcome
+                in {
+                    HypothesisResolution.PROVEN.value,
+                    HypothesisResolution.UNMEASURED.value,
+                }
             )
         ):
             count += 1
@@ -3164,11 +3171,17 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                         declared=declared_outcome,
                         passed=passed,
                         reviewed=reviewed,
-                        official_metric=(official_metric if official_evaluation else None),
+                        # Only a framework-measured (or legacy) headline number
+                        # may prove or disprove an empirical claim; an
+                        # implementer-reported one resolves as unmeasured.
+                        official_metric=(
+                            official_metric
+                            if official_evaluation and perf_provenance != "implementer"
+                            else None
+                        ),
                         baseline_metric=baseline_metric,
                         direction=metric_direction,
                         noise_fraction=pareto_relative_noise,
-                        benchmark_expected=framework_benchmark_configured,
                     )
                 )
                 disposition = CandidateDisposition(candidate_disposition)
@@ -3188,6 +3201,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                         value
                         for record in records
                         if record.official_evaluation
+                        and record.perf_provenance != "implementer"
                         and (value := _metric_value(record, metric_name)) is not None
                     ]
                     candidate_retained = scalar_candidate_retained(
