@@ -2973,6 +2973,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                 # For single-agent inner loop, `profiler_summary` carries the
                 # PREVIOUS round's profile (fed forward to the orchestrator),
                 # so this round's perf comes from `single_agent_response` instead.
+                perf_provenance: Literal["framework", "implementer"] | None = None
                 if inner_loop == "single-agent":
                     if (
                         single_agent_response is not None
@@ -2981,6 +2982,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                     ):
                         single_agent_response.perf_metric = framework_perf_metric
                         single_agent_response.perf_unit = framework_benchmark.metric_name
+                        perf_provenance = "framework"
                     profile_skipped = single_agent_response is None or (
                         single_agent_response.perf_metric is None
                     )
@@ -3002,6 +3004,10 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                         )
                         else None
                     )
+                    if perf_metric is not None and perf_provenance is None:
+                        # Not overridden by the framework benchmark above, so
+                        # this headline number is the agent's own report.
+                        perf_provenance = "implementer"
                     # Remember the latest profile for the orchestrator's next plan
                     # and carry forward the implicit profile focus.
                     if single_agent_response is not None:
@@ -3036,8 +3042,10 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                     ):
                         perf_metric = framework_perf_metric
                         perf_unit = framework_benchmark.metric_name
+                        perf_provenance = "framework"
                     elif implementation_metric is not None:
                         perf_metric = implementation_metric
+                        perf_provenance = "implementer"
                         if implementation is not None and implementation.perf_metric is not None:
                             perf_unit = implementation.perf_unit
                             accepted_metrics = dict(implementation.metrics)
@@ -3249,6 +3257,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                     ),
                     perf_baseline_metric=baseline_metric,
                     perf_delta_pct=perf_delta_pct,
+                    perf_provenance=perf_provenance,
                 )
                 # Compute the completed lifecycle transition in memory so its
                 # exact representation can enter the write-ahead journal before
