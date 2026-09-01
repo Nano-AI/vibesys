@@ -1,26 +1,26 @@
 """Shared lifecycle context for one canonical VibeSys project run."""
 
-import json
+import asyncio
+import re
 import shutil
-import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO, TypeVar, overload
+from typing import Any, TextIO, TypeVar, overload
 
 from pydantic import BaseModel
 
-from vibesys import backends
+from vibesys import backends, boot_trace
 from vibesys.agents import AgentClient, build_agent_client
 from vibesys.agents.factory import (
     agent_driver_supports_mcp_servers,
     resolve_agent_driver,
-    supported_cli_providers,
 )
+from vibesys.agents.host_resource_declarations import task_agent_host_resources
 from vibesys.agents.progress import AgentProgress
 from vibesys.backends.base import ComputeBackendImpl, ContentionMonitor
 from vibesys.config import Config, as_config
@@ -38,6 +38,7 @@ from vibesys.domains.environment import (
     NoopEnvironmentHooks,
 )
 from vibesys.errors import ConfigurationDiagnostic, ConfigurationError
+from vibesys.evaluators import load_evaluator_package, tool_install_root
 from vibesys.input_manifest import WorkspaceSource
 from vibesys.llm_client import build_model
 from vibesys.profilers import (
@@ -47,15 +48,18 @@ from vibesys.profilers import (
     profiler_definition,
     resolve_profiler_kind,
 )
-from vibesys.render import HeadlessRenderer, output_sink
 from vibesys.resource_paths import profiler_support_dir
 from vibesys.run import (
+    AgentRuntimeResources,
+    AgentSelection,
     DeviceLease,
     ExperimentRepository,
     GitTracker,
     ProjectProvisioningSpec,
     RepositoryVisibility,
+    RunAttachment,
     RunCommands,
+    RunIntegration,
     RunLogger,
     RunPaths,
     RunState,
@@ -63,6 +67,19 @@ from vibesys.run import (
     Workspace,
     provision_project,
 )
+from vibesys.run.events import (
+    AgentExecutionActivityData,
+    AgentExecutionFinishedData,
+    AgentExecutionStartedData,
+    CoreEventType,
+    EventStatus,
+    ExperimentsChangedData,
+    InvocationFinishedData,
+    InvocationStartedData,
+    PhaseData,
+    json_value,
+)
+from vibesys.run.integration import LocalRunIntegration
 from vibesys.run.project_policy import (
     build_project_path_policy,
     trusted_project_input_paths,
@@ -83,96 +100,31 @@ from vibesys.sandbox.run_environment import (
 from vs_project import (
     Project,
     RunConfiguration,
-    StateSnapshot,
     StateTransition,
     generate_run_id,
 )
-
-if TYPE_CHECKING:
-    from vibesys.server.supervisor import ChatThreadHandle, RunSupervisor
+from vs_sandbox import HostResource
 
 T = TypeVar("T", bound=BaseModel)
 
-_CHAT_STATE_DIR = "_vibesys_chat"
-_CHAT_TRAJECTORY_SUFFIXES = frozenset({".json", ".jsonl", ".log", ".md", ".txt"})
-# Trajectory snapshots are shared, read-only context for every chat thread, so
-# concurrent thread syncs must not interleave their rebuild of the directory.
-_CHAT_TRAJECTORY_SYNC_LOCK = threading.Lock()
+
+def _attempt_from_label(round_label: str) -> int | None:
+    match = re.search(r"retry-(\d+)", round_label)
+    return int(match.group(1)) if match else None
 
 
-# This is an agent instruction, not a filesystem guarantee. ProjectPathPolicy
-# cannot currently express a read-only workspace root.
-def _experiment_chat_system_prompt(conversation_path: str) -> str:
-    """Render the chat system prompt for one thread's conversation file."""
-    return f"""\
-You are the read-only investigation agent for a live VibeSys experiment. Answer the
-user's question by examining evidence instead of relying on a precomputed summary.
-
-Your working directory is the current experiment workspace. Relevant evidence is:
-- `_vibesys_chat/trajectory/state/`: the canonical portable state for this run.
-- `_vibesys_chat/trajectory/logs/`: machine-local event and run logs for this run.
-- `{conversation_path}`: successful earlier exchanges in this chat.
-- the rest of the workspace: the current implementation, evaluator inputs, and git
-  history/diffs when available.
-
-Investigate only what the question requires. Prefer targeted commands such as `rg`,
-`tail`, `jq`, `git status`, and `git diff`; correlate claims with round labels, event
-sequence numbers, tool output, or file contents. Distinguish direct evidence from
-inference, mention important missing evidence, and give a concise answer.
-
-Do not edit files, run mutating commands, start workloads, steer optimization agents,
-or claim actions you did not take. Your role is analysis only.
-"""
+def _execution_status(error: BaseException | None) -> EventStatus:
+    if error is None:
+        return EventStatus.COMPLETED
+    if isinstance(error, asyncio.CancelledError) or type(error).__name__ == "CancelledError":
+        return EventStatus.CANCELLED
+    if isinstance(error, (KeyboardInterrupt, SystemExit)):
+        return EventStatus.INTERRUPTED
+    return EventStatus.FAILED
 
 
-def _experiment_chat_continuation_prompt(instructions_path: str, conversation_path: str) -> str:
-    """Render the follow-up prompt for one thread's chat state paths."""
-    return f"""\
-Continue the read-only experiment chat. Follow `{instructions_path}`,
-consult `{conversation_path}` when the question depends on an earlier
-exchange, and investigate the refreshed trajectory evidence before making claims.
-"""
-
-
-_EXPERIMENT_CHAT_SYSTEM_PROMPT = _experiment_chat_system_prompt(
-    f"{_CHAT_STATE_DIR}/conversation.jsonl"
-)
-_EXPERIMENT_CHAT_CONTINUATION_PROMPT = _experiment_chat_continuation_prompt(
-    f"{_CHAT_STATE_DIR}/instructions.md", f"{_CHAT_STATE_DIR}/conversation.jsonl"
-)
-
-
-def _resolve_chat_thread_settings(  # noqa: PLR0913  # one boundary resolves all defaults
-    *,
-    agent_backend: str,
-    default_driver: str,
-    default_provider: str,
-    default_model: str,
-    driver: str | None,
-    provider: str | None,
-    model: str | None,
-) -> tuple[str, str, str]:
-    """Resolve one chat thread's agent selection against the run's defaults.
-
-    Rejects unsupported driver/provider combinations at creation time, with
-    errors naming the offending value, so a thread never fails only when its
-    first question arrives.
-    """
-    if agent_backend != "cli":
-        raise ValueError(  # noqa: TRY003  # surfaced to the requesting client
-            "experiment chat threads require the CLI agent backend, "
-            f"but this run uses agent backend {agent_backend!r}"
-        )
-    resolved_driver = driver or default_driver
-    resolved_provider = provider or default_provider
-    resolved_model = model or default_model
-    supported = supported_cli_providers(resolved_driver)
-    if resolved_provider not in supported:
-        raise ValueError(  # noqa: TRY003  # surfaced to the requesting client
-            f"agent driver {resolved_driver!r} does not support provider "
-            f"{resolved_provider!r}; supported providers: {', '.join(supported)}"
-        )
-    return resolved_driver, resolved_provider, resolved_model
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _coerce_dir(raw: str | Path | None, label: str) -> Path | None:
@@ -314,6 +266,7 @@ def create_run_context(  # noqa: PLR0913  # tracked: #288
     remote_repo: str | None = None,
     repo_visibility: RepositoryVisibility = RepositoryVisibility.PRIVATE,
     agent_state_model_type: type[BaseModel] | None = None,
+    integration: RunIntegration | None = None,
 ) -> "_RunContext":
     """Build a fully wired :class:`_RunContext`.
 
@@ -355,6 +308,7 @@ def create_run_context(  # noqa: PLR0913  # tracked: #288
             remote_repo=remote_repo,
             repo_visibility=repo_visibility,
             agent_state_model_type=agent_state_model_type,
+            integration=integration,
         )
     except BaseException as construction_error:
         _close_after_construction_failure(teardown_stack, construction_error)
@@ -405,721 +359,589 @@ def _assemble_run_context(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: 
     remote_repo: str | None,
     repo_visibility: RepositoryVisibility,
     agent_state_model_type: type[BaseModel] | None,
+    integration: RunIntegration | None,
 ) -> "_RunContext":
-    config = as_config(config)
-    for source in workspace_sources:
-        if not source.strip_git:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="workspace_source_untrackable",
-                    stage="workspace_setup",
-                    message=(
-                        f"workspace source {source.name!r} sets strip_git=false; canonical "
-                        "projects require source repositories to be materialized without "
-                        "nested Git metadata"
-                    ),
-                )
-            )
-
-    run_environment_spec = run_environment or make_run_environment_spec()
-    environment = build_run_environment(run_environment_spec)
-    input_path_str = _coerce_dir_path(input_path, "--input")
-    input_dir = Path(input_path_str)
-    run_id = exp_name if existing else generate_run_id(exp_name)
-    collection_root = runs_dir.expanduser().resolve() if runs_dir is not None else None
-    copied_project = not existing and collection_root is not None
-    if copied_project:
-        assert collection_root is not None  # noqa: S101  # tracked: #288
-        project_root = collection_root / run_id
-    else:
-        project_root = input_dir
-    evaluator_source = _coerce_dir(evaluator_path, "evaluator.source")
-
-    if not copied_project and workspace_sources:
-        raise ConfigurationError(
-            ConfigurationDiagnostic(
-                code="project_materialization_required",
-                stage="workspace_setup",
-                message=(
-                    "the input project declares workspace sources that must be materialized; "
-                    "pass --runs-dir to provision a self-contained project"
-                ),
-            )
-        )
-    if not copied_project and evaluator_source is not None:
-        try:
-            evaluator_source.relative_to(project_root)
-        except ValueError as exc:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="project_evaluator_not_self_contained",
-                    stage="workspace_setup",
-                    message=(
-                        "a directly launched project must contain its evaluator source; "
-                        "pass --runs-dir to copy external evaluator inputs"
-                    ),
-                )
-            ) from exc
-
-    buffered_logs: list[str] = []
-    backend_impl = backends.get(
-        backend,
-        log_dir=Project.log_directory_for(project_root, run_id),
-        log=buffered_logs.append,
-        image=environment.backend_image,
-    )
-    resolved_backend = agent_backend or config.agent.backend or DEFAULT_AGENT_BACKEND
-    resolved_cli_provider = cli_provider or config.agent.cli_provider or "codex"
-    model = None if resolved_backend == "cli" else build_model(config)
-    model_name = config.model.name
-    resolved_profiler_kind = resolve_profiler_kind(
-        profiler_kind,
-        domain=profiler_domain,
-        backend_profiler_kind=getattr(backend_impl, "profiler_kind", None),
-        environment_default_profiler_kind=environment.default_profiler_kind,
-        environment_supported_profiler_kinds=environment.supported_profiler_kinds,
-    )
-    driver_supports_mcp = agent_driver_supports_mcp_servers(
-        config,
-        agent_backend=agent_backend,
-    )
-    if resolved_profiler_kind in ACTIVE_PROFILER_KINDS and driver_supports_mcp is False:
-        driver_name = resolve_agent_driver(config)
-        definition = profiler_definition(resolved_profiler_kind)
-        raise ConfigurationError(
-            ConfigurationDiagnostic(
-                code="agent_profiler_incompatible",
-                stage="agent_capability_validation",
-                message=(
-                    f"Profiler {resolved_profiler_kind.value!r} requires session MCP server "
-                    f"{definition.mcp_name!r}, but agent driver {driver_name!r} does not "
-                    "support session MCP servers. Select agent.driver='agentshim' or "
-                    "disable profiling with --profiler none."
-                ),
-            )
-        )
-    profiler_preflight = preflight_profiler_kind(resolved_profiler_kind)
-    if not profiler_preflight.usable:
-        raise ConfigurationError(
-            ConfigurationDiagnostic(
-                code="profiler_preflight_failed",
-                stage="profiler_preflight",
-                message=profiler_preflight.error_message(),
-            )
-        )
-
-    profiler_support_path: str | None = None
-    profiler_support_name: str | None = None
-    if resolved_profiler_kind in ACTIVE_PROFILER_KINDS:
-        definition = profiler_definition(resolved_profiler_kind)
-        profiler_support_name = definition.support_name
-        default_support = profiler_support_dir(definition.kind.value)
-        if default_support is not None:
-            profiler_support_path = str(default_support)
-
-    skill_source_paths = _coerce_skills_dirs(skills_dirs)
-    input_project_dir = input_dir if (input_dir / "pyproject.toml").is_file() else None
-
-    hooks = environment_hooks or NoopEnvironmentHooks()
-    hook_log: list[Callable[[str], None]] = [buffered_logs.append]
-    environment_context: EnvironmentContext | None = None
-    environment_patch: EnvironmentPatch | None = None
-
-    def _teardown_environment_hooks() -> None:
-        assert environment_context is not None  # noqa: S101  # tracked: #288
-        try:
-            hooks.teardown(environment_context)
-        except Exception as exc:  # noqa: BLE001  # tracked: #288
-            hook_log[0](f"[warn] environment hook teardown failed: {exc}")
-
-    workspace_files = Workspace(
-        project_root,
-        run_environment=environment,
-        backend=backend_impl,
-        log=buffered_logs.append,
-        project_root=PROJECT_ROOT,
-        compute_backend=backend,
-    )
-    construction_complete = False
-    if copied_project:
-        assert collection_root is not None  # noqa: S101  # tracked: #288
-
-        def _remove_incomplete_project() -> None:
-            if not construction_complete and project_root.exists():
-                shutil.rmtree(project_root)
-
-        teardown_stack.callback(_remove_incomplete_project)
-        source_reference = (task_root or input_dir) / "reference"
-        environment_context = EnvironmentContext(
-            reference_path=source_reference,
-            workspace=project_root,
-            run_environment=environment,
-            project_root=PROJECT_ROOT,
-            model_cache_dir=collection_root / ".cache" / "huggingface",
-            runtime_artifact_dir=(
-                source_reference
-                if task_name is None
-                else collection_root / ".cache" / "llm-serving" / run_id
-            ),
-            log=buffered_logs.append,
-        )
-        environment_patch = hooks.prepare(environment_context)
-        teardown_stack.callback(_teardown_environment_hooks)
-        provision_project(
-            input_dir,
-            project_root,
-            spec=ProjectProvisioningSpec(
-                workspace=workspace_files,
-                workspace_sources=workspace_sources,
-                evaluator_source=evaluator_source,
-                task_name=task_name,
-                input_project_dir=input_project_dir,
-                input_excludes=environment_patch.copy_excludes,
-            ),
-        )
-        if evaluator_source is not None:
-            evaluator_source = project_root / "_evaluator" / evaluator_source.name
-    else:
-        workspace_files.create()
-
-    project = Project.open(project_root)
-    project_state = project.state
-    log_dir = project_state.log_directory(run_id)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    from vibesys.server.registry import active_supervisor  # noqa: PLC0415  # tracked: #288
-
-    supervisor = active_supervisor()
-    if supervisor is not None:
-        supervisor.attach(log_dir)
-    logger = RunLogger(log_dir)
-    teardown_stack.callback(logger.close)
-    hook_log[0] = logger.lprint
-    for message in buffered_logs:
-        logger.lprint(message)
-
-    if supervisor is None:
-        renderer = HeadlessRenderer()
-        teardown_stack.callback(output_sink().subscribe(renderer.handle))
-
-    paths = RunPaths(
-        project_root=project_root,
-        log_dir=log_dir,
-        run_log_path=logger.path,
-    )
-    if existing:
-        workspace_files.repair()
-
-    project_excluded_dirs = set(workspace_files.excluded_dirs)
-    if profiler_support_name is not None:
-        project_excluded_dirs.add(profiler_support_name)
-    git = GitTracker(
-        project_root,
-        run_id=run_id,
-        log=logger.lprint,
-        excluded_dirs=project_excluded_dirs,
-        trusted_input_paths=trusted_project_input_paths(
-            project_root,
-            evaluator_source=evaluator_source,
-        ),
-    )
-    git.init(existing, trusted_input_baseline=trusted_input_baseline)
-    effective_configuration = project_configuration.model_copy(
-        update={"profiler": resolved_profiler_kind.value}
-    )
-    round_transaction_coordinator: RoundTransactionCoordinator | None = None
-    if existing:
-        project_state.load_project()
-        run_manifest = project_state.load_run(run_id)
-        if git.trusted_input_baseline is None:
-            git.configure_trusted_input_baseline(run_manifest.trusted_input_baseline)
-        elif git.trusted_input_baseline != run_manifest.trusted_input_baseline:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="project_trusted_baseline_mismatch",
-                    stage="resume_resolution",
-                    message=(
-                        f"run {run_id!r} records trusted input baseline "
-                        f"{run_manifest.trusted_input_baseline!r}, but the requested "
-                        f"baseline resolves to {git.trusted_input_baseline!r}"
-                    ),
-                )
-            )
-        if run_manifest.branch != git.project_branch:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="project_state_mismatch",
-                    stage="resume_resolution",
-                    message=(
-                        f"run {run_id!r} records branch {run_manifest.branch!r}, "
-                        f"but Git selected {git.project_branch!r}"
-                    ),
-                )
-            )
-        if run_manifest.task_name != task_name:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="project_task_mismatch",
-                    stage="resume_resolution",
-                    message=(
-                        f"run {run_id!r} records task {run_manifest.task_name!r}, "
-                        f"but task {task_name!r} was selected"
-                    ),
-                )
-            )
-        configuration_update = _resume_configuration_update(
-            run_manifest.configuration,
-            effective_configuration,
-        )
-        if configuration_update is not None:
-            limit_field = (
-                "max_generations"
-                if run_manifest.configuration.outer_loop == "evolve"
-                else "max_rounds"
-            )
-            limit_increased = getattr(configuration_update, limit_field) > getattr(
-                run_manifest.configuration, limit_field
-            )
-            if limit_increased:
-                pending = git.pending_changes()
-                if pending:
+    context_start = time.perf_counter()
+    # Boot spans recorded before this function ran (the dispatch preamble)
+    # come first, so the run log reads in the order the work happened once
+    # the buffer below flushes into ``RunLogger``. Assembly's own spans stay
+    # in ``boot_trace`` until the drain below, because the earliest of them
+    # close before there is a logger to write to.
+    buffered_logs: list[str] = boot_trace.drain_log_lines()
+    owns_integration = integration is None
+    integration = integration or LocalRunIntegration()
+    if owns_integration:
+        teardown_stack.callback(integration.close)
+    with boot_trace.span("context"):
+        with boot_trace.span("config_and_inputs"):
+            config = as_config(config)
+            for source in workspace_sources:
+                if not source.strip_git:
                     raise ConfigurationError(
                         ConfigurationDiagnostic(
-                            code="project_resume_configuration_dirty",
-                            stage="resume_resolution",
+                            code="workspace_source_untrackable",
+                            stage="workspace_setup",
                             message=(
-                                "commit or discard pending project changes before increasing "
-                                f"the run limit: {', '.join(pending)}"
+                                f"workspace source {source.name!r} sets strip_git=false; canonical "
+                                "projects require source repositories to be materialized without "
+                                "nested Git metadata"
                             ),
                         )
                     )
-            project_state.update_run_configuration(run_id, configuration_update)
-            snapshot = project_state.run_manifest_snapshot(run_id)
-            if limit_increased:
-                git.snapshot_with_framework_metadata(
-                    "vibesys: update run configuration",
-                    snapshot,
-                )
+
+            run_environment_spec = run_environment or make_run_environment_spec()
+            environment = build_run_environment(run_environment_spec)
+            input_path_str = _coerce_dir_path(input_path, "--input")
+            input_dir = Path(input_path_str)
+            run_id = exp_name if existing else generate_run_id(exp_name)
+            collection_root = runs_dir.expanduser().resolve() if runs_dir is not None else None
+            copied_project = not existing and collection_root is not None
+            if copied_project:
+                assert collection_root is not None  # noqa: S101  # tracked: #288
+                project_root = collection_root / run_id
             else:
-                git.snapshot_framework_metadata_only(
-                    "vibesys: migrate run configuration",
-                    snapshot,
-                )
-        project_state.set_current_run(run_id)
-    else:
-        project_state.create_project(project_root.name)
-        if git.trusted_input_baseline is None:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="project_trusted_baseline_missing",
-                    stage="workspace_setup",
-                    message="Git did not provide the project run branch-point commit",
-                )
-            )
-        run_manifest = project_state.new_run_manifest(
-            exp_name,
-            task_name=task_name,
-            run_id=run_id,
-            branch=git.project_branch,
-            vibesys_version=_installed_vibesys_version(),
-            configuration=effective_configuration,
-            trusted_input_baseline=git.trusted_input_baseline,
-        )
-        project_state.create_run(run_manifest)
-        git.snapshot_with_framework_metadata(
-            f"vibesys: initialize run {run_id}",
-            project_state.initialization_snapshot(run_id),
-        )
+                project_root = input_dir
+            evaluator_source = _coerce_dir(evaluator_path, "evaluator.source")
 
-    if project_configuration.outer_loop == "agent":
-        if agent_state_model_type is None:
-            raise ValueError("agent runs require an agent state model type")  # noqa: TRY003  # tracked: #288
-        round_transaction_coordinator = RoundTransactionCoordinator(
-            project,
-            git,
-            run_id,
-            agent_state_model_type=agent_state_model_type,
-        )
-        if existing:
-            recovery = round_transaction_coordinator.recover()
-            if recovery is not RoundRecoveryOutcome.NO_TRANSACTION:
-                logger.lprint(f"[project] recovered round transaction: {recovery.value}")
-
-    if supervisor is not None:
-        supervisor.attach(log_dir, project=project, run_id=run_id)
-        from vibesys.server.events import (  # noqa: PLC0415  # tracked: #288
-            EventType,
-            ExperimentsChangedData,
-        )
-
-        supervisor.record(
-            EventType.EXPERIMENTS_CHANGED,
-            data=ExperimentsChangedData(reason="project_attached"),
-        )
-
-    project_ref_dir = (
-        project_root / task_root.relative_to(input_dir) / "reference"
-        if task_root is not None and copied_project
-        else (task_root or project_root) / "reference"
-    )
-    ref_dir = project_ref_dir if project_ref_dir.is_dir() else None
-    if ref_dir is not None:
-        reference_py = sorted(ref_dir.glob("*.py"))
-        reference_root = ref_dir.relative_to(project_root).as_posix()
-        ref_name = (
-            f"{reference_root}/{reference_py[0].name}" if len(reference_py) == 1 else reference_root
-        )
-    else:
-        ref_name = "."
-
-    if environment_context is None:
-        environment_context = EnvironmentContext(
-            reference_path=project_ref_dir,
-            workspace=project_root,
-            run_environment=environment,
-            project_root=PROJECT_ROOT,
-            model_cache_dir=project_state.model_cache_directory("huggingface"),
-            runtime_artifact_dir=project_state.model_cache_directory("llm-serving"),
-            log=logger.lprint,
-        )
-        environment_patch = hooks.prepare(environment_context)
-        teardown_stack.callback(_teardown_environment_hooks)
-    assert environment_patch is not None  # noqa: S101  # tracked: #288
-
-    plan = workspace_files.plan_setup(
-        existing=True,
-        input_dir=project_root,
-        evaluator_source=None,
-        skill_sources=skill_source_paths,
-        input_project_dir=None,
-        profiler_support_path=profiler_support_path,
-        profiler_support_name=profiler_support_name,
-        workspace_sources=(),
-        extra_input_excludes=environment_patch.copy_excludes,
-    )
-    workspace_files.setup(plan, existing=True)
-
-    runtime_state = project_state.portable_namespace(run_id, "runtime")
-    objective_document: Path | None = None
-    if objective is not None:
-        objective_document = runtime_state.external_directory() / "effective-objective.md"
-        objective_document.parent.mkdir(parents=True, exist_ok=True)
-        objective_document.write_text(objective)
-        git.snapshot_framework_state(
-            "vibesys: record effective objective",
-            runtime_state.snapshot(),
-        )
-
-    project_path_policy = build_project_path_policy(
-        project_root,
-        evaluator_source=evaluator_source,
-    )
-
-    tracked_experiment_repository: ExperimentRepository | None = None
-    experiment_repository = ExperimentRepository(project_root, logger.lprint)
-    origin_exists = experiment_repository.has_origin()
-    if (
-        remote_repo is not None
-        and origin_exists
-        and not experiment_repository.origin_matches(remote_repo)
-    ):
-        raise ConfigurationError(
-            ConfigurationDiagnostic(
-                code="repository_setup_failed",
-                stage="repository_setup",
-                message=(
-                    f"Project origin does not match requested repository {remote_repo!r}: "
-                    f"{project_root}"
-                ),
-            )
-        )
-    should_publish = remote_repo is not None or (
-        existing
-        and origin_exists
-        and (
-            collection_root is not None or experiment_repository.current_run_branch_tracks_origin()
-        )
-    )
-    if should_publish:
-        try:
-            if remote_repo is not None and not origin_exists:
-                experiment_repository.create_remote(remote_repo, repo_visibility)
-        except Exception as exc:
-            raise ConfigurationError(
-                ConfigurationDiagnostic(
-                    code="repository_setup_failed",
-                    stage="repository_setup",
-                    message=f"Could not configure project repository {remote_repo!r}: {exc}",
-                )
-            ) from exc
-        tracked_experiment_repository = experiment_repository
-
-        def _push_experiment_repository() -> None:
-            try:
-                experiment_repository.push()
-            except Exception as exc:
+            if not copied_project and workspace_sources:
                 raise ConfigurationError(
                     ConfigurationDiagnostic(
-                        code="repository_sync_failed",
-                        stage="repository_sync",
-                        message=f"Could not push project repository: {exc}",
+                        code="project_materialization_required",
+                        stage="workspace_setup",
+                        message=(
+                            "the input project declares workspace sources that must be materialized; "
+                            "pass --runs-dir to provision a self-contained project"
+                        ),
                     )
-                ) from exc
+                )
+            if not copied_project and evaluator_source is not None:
+                try:
+                    evaluator_source.relative_to(project_root)
+                except ValueError as exc:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="project_evaluator_not_self_contained",
+                            stage="workspace_setup",
+                            message=(
+                                "a directly launched project must contain its evaluator source; "
+                                "pass --runs-dir to copy external evaluator inputs"
+                            ),
+                        )
+                    ) from exc
 
-        teardown_stack.callback(_push_experiment_repository)
-
-    run_environment_request = RunEnvironmentRequest(
-        log_dir=log_dir,
-        workspace=project_root,
-        workspace_sources=(),
-        ref_dir=ref_dir,
-        backend=backend_impl,
-        agent_backend=resolved_backend,
-        cli_provider=resolved_cli_provider,
-        run_id=run_id,
-        objective=objective,
-        objective_document=objective_document,
-        accuracy_command=accuracy_command,
-        benchmark_command=benchmark_command,
-        benchmark_output_argument=benchmark_output_argument,
-        evaluator_package_root=evaluator_package_root,
-        profiler_support_path=profiler_support_path,
-        profiler_support_name=profiler_support_name,
-        git_history_root=git.history_root,
-        environment_bind_mounts=environment_patch.bind_mounts,
-        log=logger.lprint,
-        framework_root=PROJECT_ROOT,
-        project_path_policy=project_path_policy,
-        state_namespace=project_state.local_namespace(run_id, "skypilot"),
-    )
-    session = teardown_stack.enter_context(environment.open(run_environment_request))
-    # Snapshot the agent-facing commands once the session is open; the
-    # view's paths are fixed for the session lifetime.
-    commands = RunCommands(
-        judge_accuracy_command=session.view.paths.accuracy_command,
-        judge_benchmark_command=session.view.paths.benchmark_command,
-        profiler_support_agent_path=session.view.paths.profiler_support,
-        profiler_benchmark_command=session.view.paths.benchmark_command,
-    )
-
-    # Start backend-specific background monitoring (CUDA: nvidia-smi).
-    device = DeviceLease(backend_impl, log_dir=log_dir, run_environment_view=session.view)
-    teardown_stack.callback(device.close)
-    device.start_monitor()
-
-    # Build the backend-agnostic agent client. Loops invoke this instead
-    # of calling create_deep_agent / vibesys._agent_cli directly. The cli
-    # backend is rejected if --docker is set; build_agent_client raises
-    # SystemExit with a clear message in that case.
-    agent_client = build_agent_client(
-        config,
-        agent_backend=agent_backend,
-        cli_provider=cli_provider,
-        backends={
-            "implementer": session.sandbox,
-            "judge": session.sandbox,
-            # Perf eval reuses the implementer's backend today (loop.py:564),
-            # so the runner picks the same one when kind="perf_eval".
-            "perf_eval": session.sandbox,
-            # Profiler also reuses the implementer's backend — it needs
-            # shell access to start/stop the server and run nsys.
-            "profiler": session.sandbox,
-            # Orchestrator (orchestrate loop) inspects the workspace
-            # and writes plans — reuse the implementer's backend for
-            # file access.
-            "orchestrator": session.sandbox,
-        },
-        skills=[src.name for src in skill_source_paths],
-        skill_source_dirs=skill_source_paths,
-        compute_backend=backend,
-        model=model,
-        model_name=model_name,
-        run_log_file=logger.writer,
-        use_docker=session.view.cli_sandboxed,
-        log_dir=log_dir,
-        project_path_policy=project_path_policy,
-        require_host_sandbox=not session.view.cli_sandboxed,
-    )
-    close_agent_client = getattr(agent_client, "close", None)
-    if callable(close_agent_client):
-        teardown_stack.callback(close_agent_client)
-
-    experiment_chat: _ExperimentChatService | None = None
-    experiment_chat_owner = ExitStack()
-    chat_thread_services: list[_ExperimentChatService] = []
-    from vibesys.server.chat_options import ChatRunSettings  # noqa: PLC0415
-
-    # The run's own agent selection. It is both the default for every chat
-    # thread and the basis the server enumerates chat options from, so it is
-    # resolved once here rather than at each call site.
-    run_chat_settings = ChatRunSettings(
-        driver=resolve_agent_driver(config),
-        provider=resolved_cli_provider,
-        model=model_name,
-        role_models=tuple(
-            role.model
-            for role in (config.agent.outer, config.agent.inner)
-            if role.model is not None
-        ),
-    )
-    if supervisor is not None:
-        chat_supervisor = supervisor
-        supervisor.set_chat_run_settings(run_chat_settings)
-
-        def _build_experiment_chat(
-            *,
-            thread_id: str | None = None,
-            chat_driver: str | None = None,
-            chat_provider: str | None = None,
-            chat_model_name: str | None = None,
-        ) -> _ExperimentChatService:
-            """Build resources owned only by one experiment chat service.
-
-            The default thread (``thread_id=None``) reuses the run's agent
-            selection; a created thread carries its own resolved driver,
-            provider, and model. Either way the service is told which
-            selection it runs so its executions are labelled like any other
-            agent's rather than as an anonymous "chat".
-            """
-            resources = ExitStack()
-            try:
-                chat_logger = RunLogger(log_dir, tee_stderr=False)
-                resources.callback(chat_logger.close)
-                chat_logger.switch(
-                    "experiment-chat" if thread_id is None else f"experiment-chat-{thread_id[:8]}"
+        with boot_trace.span("backend_and_model"):
+            backend_impl = backends.get(
+                backend,
+                log_dir=Project.log_directory_for(project_root, run_id),
+                log=buffered_logs.append,
+                image=environment.backend_image,
+            )
+            resolved_backend = agent_backend or config.agent.backend or DEFAULT_AGENT_BACKEND
+            resolved_cli_provider = cli_provider or config.agent.cli_provider or "codex"
+            model = None if resolved_backend == "cli" else build_model(config)
+            model_name = config.model.name
+        with boot_trace.span("profiler_preflight"):
+            resolved_profiler_kind = resolve_profiler_kind(
+                profiler_kind,
+                domain=profiler_domain,
+                backend_profiler_kind=getattr(backend_impl, "profiler_kind", None),
+                environment_default_profiler_kind=environment.default_profiler_kind,
+                environment_supported_profiler_kinds=environment.supported_profiler_kinds,
+            )
+            driver_supports_mcp = agent_driver_supports_mcp_servers(
+                config,
+                agent_backend=agent_backend,
+            )
+            if resolved_profiler_kind in ACTIVE_PROFILER_KINDS and driver_supports_mcp is False:
+                driver_name = resolve_agent_driver(config)
+                definition = profiler_definition(resolved_profiler_kind)
+                raise ConfigurationError(
+                    ConfigurationDiagnostic(
+                        code="agent_profiler_incompatible",
+                        stage="agent_capability_validation",
+                        message=(
+                            f"Profiler {resolved_profiler_kind.value!r} requires session MCP server "
+                            f"{definition.mcp_name!r}, but agent driver {driver_name!r} does not "
+                            "support session MCP servers. Select agent.driver='agentshim' or "
+                            "disable profiling with --profiler none."
+                        ),
+                    )
+                )
+            profiler_preflight = preflight_profiler_kind(resolved_profiler_kind)
+            if not profiler_preflight.usable:
+                raise ConfigurationError(
+                    ConfigurationDiagnostic(
+                        code="profiler_preflight_failed",
+                        stage="profiler_preflight",
+                        message=profiler_preflight.error_message(),
+                    )
                 )
 
-                chat_backends: dict[str, Any] | None = None
-                chat_use_docker = False
-                if resolved_backend == "deepagents" or session.view.cli_sandboxed:
-                    chat_environment_session = resources.enter_context(
-                        environment.open(replace(run_environment_request, log=chat_logger.lprint))
-                    )
-                    chat_backends = {"chat": chat_environment_session.sandbox}
-                    chat_use_docker = chat_environment_session.view.cli_sandboxed
+        with boot_trace.span("workspace_materialize"):
+            profiler_support_path: str | None = None
+            profiler_support_name: str | None = None
+            if resolved_profiler_kind in ACTIVE_PROFILER_KINDS:
+                definition = profiler_definition(resolved_profiler_kind)
+                profiler_support_name = definition.support_name
+                default_support = profiler_support_dir(definition.kind.value)
+                if default_support is not None:
+                    profiler_support_path = str(default_support)
 
-                chat_config = config
-                if chat_driver is not None:
-                    chat_config = config.model_copy(
-                        update={"agent": config.agent.model_copy(update={"driver": chat_driver})}
-                    )
-                chat_client = build_agent_client(
-                    chat_config,
-                    agent_backend=agent_backend,
-                    cli_provider=chat_provider if chat_provider is not None else cli_provider,
-                    backends=chat_backends,
-                    skills=[src.name for src in skill_source_paths],
-                    skill_source_dirs=skill_source_paths,
-                    compute_backend=backend,
-                    model=model,
-                    model_name=chat_model_name if chat_model_name is not None else model_name,
-                    run_log_file=chat_logger.writer,
-                    use_docker=chat_use_docker,
-                    log_dir=log_dir,
-                    project_path_policy=project_path_policy,
-                    require_host_sandbox=not chat_use_docker,
-                )
-                resources.callback(chat_client.close)
-                return _ExperimentChatService(
-                    _ExperimentChatDependencies(
-                        supervisor=chat_supervisor,
-                        agent_client=chat_client,
-                        workspace=project_root,
-                        log_dir=log_dir,
-                        project=project,
-                        run_id=run_id,
-                        log=chat_logger.lprint,
-                        flush_logs=chat_logger.writer.flush,
-                        environment=dict,
-                        progress=lambda: None,
-                        thread_id=thread_id,
-                        driver=chat_driver if chat_driver is not None else run_chat_settings.driver,
-                        provider=(
-                            chat_provider
-                            if chat_provider is not None
-                            else run_chat_settings.provider
-                        ),
-                        model=(
-                            chat_model_name
-                            if chat_model_name is not None
-                            else run_chat_settings.model
-                        ),
+            skill_source_paths = _coerce_skills_dirs(skills_dirs)
+            input_project_dir = input_dir if (input_dir / "pyproject.toml").is_file() else None
+
+            hooks = environment_hooks or NoopEnvironmentHooks()
+            hook_log: list[Callable[[str], None]] = [buffered_logs.append]
+            environment_context: EnvironmentContext | None = None
+            environment_patch: EnvironmentPatch | None = None
+
+            def _teardown_environment_hooks() -> None:
+                assert environment_context is not None  # noqa: S101  # tracked: #288
+                try:
+                    hooks.teardown(environment_context)
+                except Exception as exc:  # noqa: BLE001  # tracked: #288
+                    hook_log[0](f"[warn] environment hook teardown failed: {exc}")
+
+            workspace_files = Workspace(
+                project_root,
+                run_environment=environment,
+                backend=backend_impl,
+                log=buffered_logs.append,
+                project_root=PROJECT_ROOT,
+                compute_backend=backend,
+            )
+            construction_complete = False
+            if copied_project:
+                assert collection_root is not None  # noqa: S101  # tracked: #288
+
+                def _remove_incomplete_project() -> None:
+                    if not construction_complete and project_root.exists():
+                        shutil.rmtree(project_root)
+
+                teardown_stack.callback(_remove_incomplete_project)
+                source_reference = (task_root or input_dir) / "reference"
+                environment_context = EnvironmentContext(
+                    reference_path=source_reference,
+                    workspace=project_root,
+                    run_environment=environment,
+                    project_root=PROJECT_ROOT,
+                    model_cache_dir=collection_root / ".cache" / "huggingface",
+                    runtime_artifact_dir=(
+                        source_reference
+                        if task_name is None
+                        else collection_root / ".cache" / "llm-serving" / run_id
                     ),
-                    resources.pop_all(),
+                    log=buffered_logs.append,
                 )
-            except BaseException as construction_error:
-                _close_after_construction_failure(resources, construction_error)
-                raise
+                environment_patch = hooks.prepare(environment_context)
+                teardown_stack.callback(_teardown_environment_hooks)
+                provision_project(
+                    input_dir,
+                    project_root,
+                    spec=ProjectProvisioningSpec(
+                        workspace=workspace_files,
+                        workspace_sources=workspace_sources,
+                        evaluator_source=evaluator_source,
+                        task_name=task_name,
+                        input_project_dir=input_project_dir,
+                        input_excludes=environment_patch.copy_excludes,
+                    ),
+                )
+                if evaluator_source is not None:
+                    evaluator_source = project_root / "_evaluator" / evaluator_source.name
+            else:
+                workspace_files.create()
 
-        def _chat_thread_factory(
-            thread_id: str,
-            driver: str | None,
-            provider: str | None,
-            model_override: str | None,
-        ) -> "ChatThreadHandle":
-            """Create one thread's chat service; the run context owns cleanup."""
-            from vibesys.server.events import ChatThreadCreatedData  # noqa: PLC0415
-            from vibesys.server.supervisor import ChatThreadHandle  # noqa: PLC0415
+        with boot_trace.span("project_open"):
+            project = Project.open(project_root)
+            project_state = project.state
+            log_dir = project_state.log_directory(run_id)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            evaluator_tools_root = None
+            evaluator_tool_roots: tuple[Path, ...] = ()
+            if evaluator_package_root is not None:
+                evaluator_tools = load_evaluator_package(evaluator_package_root).metadata.tools
+                if evaluator_tools:
+                    evaluator_tools_root = project_state.model_cache_directory("evaluator-tools")
+                    evaluator_tool_roots = tuple(
+                        tool_install_root(evaluator_tools_root, name, spec)
+                        for name, spec in evaluator_tools.items()
+                    )
+        with boot_trace.span("log_bootstrap"):
+            integration.attach(log_dir)
+            logger = RunLogger(log_dir)
+            teardown_stack.callback(logger.close)
+            hook_log[0] = logger.lprint
+            for message in buffered_logs:
+                logger.lprint(message)
 
-            resolved_driver, resolved_provider, resolved_model = _resolve_chat_thread_settings(
-                agent_backend=resolved_backend,
-                default_driver=run_chat_settings.driver,
-                default_provider=run_chat_settings.provider,
-                default_model=run_chat_settings.model,
-                driver=driver,
-                provider=provider,
-                model=model_override,
-            )
-            service = _build_experiment_chat(
-                thread_id=thread_id,
-                chat_driver=resolved_driver,
-                chat_provider=resolved_provider,
-                chat_model_name=resolved_model,
-            )
-            chat_thread_services.append(service)
-            return ChatThreadHandle(
-                spec=ChatThreadCreatedData(
-                    thread_id=thread_id,
-                    driver=resolved_driver,
-                    provider=resolved_provider,
-                    model=resolved_model,
-                    created_at=datetime.now(UTC),
+        paths = RunPaths(
+            project_root=project_root,
+            log_dir=log_dir,
+            run_log_path=logger.path,
+        )
+        if existing:
+            with boot_trace.span("workspace_repair"):
+                workspace_files.repair()
+
+        with boot_trace.span("git_tracker_init"):
+            project_excluded_dirs = set(workspace_files.excluded_dirs)
+            if profiler_support_name is not None:
+                project_excluded_dirs.add(profiler_support_name)
+            git = GitTracker(
+                project_root,
+                run_id=run_id,
+                log=logger.lprint,
+                excluded_dirs=project_excluded_dirs,
+                trusted_input_paths=trusted_project_input_paths(
+                    project_root,
+                    evaluator_source=evaluator_source,
                 ),
-                handler=service.ask,
+            )
+            git.init(existing, trusted_input_baseline=trusted_input_baseline)
+        with boot_trace.span("project_state_resume"):
+            effective_configuration = project_configuration.model_copy(
+                update={"profiler": resolved_profiler_kind.value}
+            )
+            round_transaction_coordinator: RoundTransactionCoordinator | None = None
+            if existing:
+                project_state.load_project()
+                run_manifest = project_state.load_run(run_id)
+                if git.trusted_input_baseline is None:
+                    git.configure_trusted_input_baseline(run_manifest.trusted_input_baseline)
+                elif git.trusted_input_baseline != run_manifest.trusted_input_baseline:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="project_trusted_baseline_mismatch",
+                            stage="resume_resolution",
+                            message=(
+                                f"run {run_id!r} records trusted input baseline "
+                                f"{run_manifest.trusted_input_baseline!r}, but the requested "
+                                f"baseline resolves to {git.trusted_input_baseline!r}"
+                            ),
+                        )
+                    )
+                if run_manifest.branch != git.project_branch:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="project_state_mismatch",
+                            stage="resume_resolution",
+                            message=(
+                                f"run {run_id!r} records branch {run_manifest.branch!r}, "
+                                f"but Git selected {git.project_branch!r}"
+                            ),
+                        )
+                    )
+                if run_manifest.task_name != task_name:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="project_task_mismatch",
+                            stage="resume_resolution",
+                            message=(
+                                f"run {run_id!r} records task {run_manifest.task_name!r}, "
+                                f"but task {task_name!r} was selected"
+                            ),
+                        )
+                    )
+                configuration_update = _resume_configuration_update(
+                    run_manifest.configuration,
+                    effective_configuration,
+                )
+                if configuration_update is not None:
+                    limit_field = (
+                        "max_generations"
+                        if run_manifest.configuration.outer_loop == "evolve"
+                        else "max_rounds"
+                    )
+                    limit_increased = getattr(configuration_update, limit_field) > getattr(
+                        run_manifest.configuration, limit_field
+                    )
+                    if limit_increased:
+                        pending = git.pending_changes()
+                        if pending:
+                            raise ConfigurationError(
+                                ConfigurationDiagnostic(
+                                    code="project_resume_configuration_dirty",
+                                    stage="resume_resolution",
+                                    message=(
+                                        "commit or discard pending project changes before increasing "
+                                        f"the run limit: {', '.join(pending)}"
+                                    ),
+                                )
+                            )
+                    project_state.update_run_configuration(run_id, configuration_update)
+                    snapshot = project_state.run_manifest_snapshot(run_id)
+                    if limit_increased:
+                        git.snapshot_with_framework_metadata(
+                            "vibesys: update run configuration",
+                            snapshot,
+                        )
+                    else:
+                        git.snapshot_framework_metadata_only(
+                            "vibesys: migrate run configuration",
+                            snapshot,
+                        )
+                project_state.set_current_run(run_id)
+            else:
+                project_state.create_project(project_root.name)
+                if git.trusted_input_baseline is None:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="project_trusted_baseline_missing",
+                            stage="workspace_setup",
+                            message="Git did not provide the project run branch-point commit",
+                        )
+                    )
+                run_manifest = project_state.new_run_manifest(
+                    exp_name,
+                    task_name=task_name,
+                    run_id=run_id,
+                    branch=git.project_branch,
+                    vibesys_version=_installed_vibesys_version(),
+                    configuration=effective_configuration,
+                    trusted_input_baseline=git.trusted_input_baseline,
+                )
+                project_state.create_run(run_manifest)
+                git.snapshot_with_framework_metadata(
+                    f"vibesys: initialize run {run_id}",
+                    project_state.initialization_snapshot(run_id),
+                )
+
+        with boot_trace.span("round_transaction_recovery"):
+            if project_configuration.outer_loop == "agent":
+                if agent_state_model_type is None:
+                    raise ValueError("agent runs require an agent state model type")  # noqa: TRY003  # tracked: #288
+                round_transaction_coordinator = RoundTransactionCoordinator(
+                    project,
+                    git,
+                    run_id,
+                    agent_state_model_type=agent_state_model_type,
+                )
+                if existing:
+                    recovery = round_transaction_coordinator.recover()
+                    if recovery is not RoundRecoveryOutcome.NO_TRANSACTION:
+                        logger.lprint(f"[project] recovered round transaction: {recovery.value}")
+
+        with boot_trace.span("workspace_setup"):
+            integration.attach(log_dir, project=project, run_id=run_id)
+            integration.events.emit(
+                CoreEventType.EXPERIMENTS_CHANGED,
+                data=ExperimentsChangedData(reason="project_attached"),
+            )
+            logger.lprint(
+                f"experiments gate open after {(time.perf_counter() - context_start) * 1000:.0f}ms"
             )
 
-        supervisor.set_chat_thread_factory(_chat_thread_factory)
-        try:
-            experiment_chat = _build_experiment_chat()
-        except Exception as exc:  # noqa: BLE001  # experiment chat is an optional surface
-            supervisor.publish_output(
-                "stderr",
-                f"Experiment chat is unavailable: {type(exc).__name__}: {exc}\n",
-                source="experiment-chat",
+            project_ref_dir = (
+                project_root / task_root.relative_to(input_dir) / "reference"
+                if task_root is not None and copied_project
+                else (task_root or project_root) / "reference"
             )
-        else:
-            from vibesys.server.supervisor import TerminalChatResource  # noqa: PLC0415
+            ref_dir = project_ref_dir if project_ref_dir.is_dir() else None
+            if ref_dir is not None:
+                reference_py = sorted(ref_dir.glob("*.py"))
+                reference_root = ref_dir.relative_to(project_root).as_posix()
+                ref_name = (
+                    f"{reference_root}/{reference_py[0].name}"
+                    if len(reference_py) == 1
+                    else reference_root
+                )
+            else:
+                ref_name = "."
 
-            experiment_chat_owner.callback(experiment_chat.close)
-            resource = TerminalChatResource(
-                handler=experiment_chat.ask,
-                close=experiment_chat.close,
+            if environment_context is None:
+                environment_context = EnvironmentContext(
+                    reference_path=project_ref_dir,
+                    workspace=project_root,
+                    run_environment=environment,
+                    project_root=PROJECT_ROOT,
+                    model_cache_dir=project_state.model_cache_directory("huggingface"),
+                    runtime_artifact_dir=project_state.model_cache_directory("llm-serving"),
+                    log=logger.lprint,
+                )
+                environment_patch = hooks.prepare(environment_context)
+                teardown_stack.callback(_teardown_environment_hooks)
+            assert environment_patch is not None  # noqa: S101  # tracked: #288
+
+            plan = workspace_files.plan_setup(
+                existing=True,
+                input_dir=project_root,
+                evaluator_source=None,
+                skill_sources=skill_source_paths,
+                input_project_dir=None,
+                profiler_support_path=profiler_support_path,
+                profiler_support_name=profiler_support_name,
+                workspace_sources=(),
+                extra_input_excludes=environment_patch.copy_excludes,
             )
-            try:
-                retained = supervisor.retain_terminal_chat_resource(resource)
-            except BaseException as transfer_error:
-                _close_after_construction_failure(experiment_chat_owner, transfer_error)
-                raise
-            if retained:
-                # Presentation lifetime now owns the session. Primary teardown
-                # must neither drain nor close it.
-                experiment_chat_owner.pop_all()
-                experiment_chat = None
+            workspace_files.setup(plan, existing=True)
 
-    try:
+        with boot_trace.span("environment_open"):
+            runtime_state = project_state.portable_namespace(run_id, "runtime")
+            objective_document: Path | None = None
+            if objective is not None:
+                objective_document = runtime_state.external_directory() / "effective-objective.md"
+                objective_document.parent.mkdir(parents=True, exist_ok=True)
+                objective_document.write_text(objective)
+                git.snapshot_framework_state(
+                    "vibesys: record effective objective",
+                    runtime_state.snapshot(),
+                )
+
+            project_path_policy = build_project_path_policy(
+                project_root,
+                evaluator_source=evaluator_source,
+            )
+
+            tracked_experiment_repository: ExperimentRepository | None = None
+            experiment_repository = ExperimentRepository(project_root, logger.lprint)
+            origin_exists = experiment_repository.has_origin()
+            if (
+                remote_repo is not None
+                and origin_exists
+                and not experiment_repository.origin_matches(remote_repo)
+            ):
+                raise ConfigurationError(
+                    ConfigurationDiagnostic(
+                        code="repository_setup_failed",
+                        stage="repository_setup",
+                        message=(
+                            f"Project origin does not match requested repository {remote_repo!r}: "
+                            f"{project_root}"
+                        ),
+                    )
+                )
+            should_publish = remote_repo is not None or (
+                existing
+                and origin_exists
+                and (
+                    collection_root is not None
+                    or experiment_repository.current_run_branch_tracks_origin()
+                )
+            )
+            if should_publish:
+                try:
+                    if remote_repo is not None and not origin_exists:
+                        experiment_repository.create_remote(remote_repo, repo_visibility)
+                except Exception as exc:
+                    raise ConfigurationError(
+                        ConfigurationDiagnostic(
+                            code="repository_setup_failed",
+                            stage="repository_setup",
+                            message=f"Could not configure project repository {remote_repo!r}: {exc}",
+                        )
+                    ) from exc
+                tracked_experiment_repository = experiment_repository
+
+                def _push_experiment_repository() -> None:
+                    try:
+                        experiment_repository.push()
+                    except Exception as exc:
+                        raise ConfigurationError(
+                            ConfigurationDiagnostic(
+                                code="repository_sync_failed",
+                                stage="repository_sync",
+                                message=f"Could not push project repository: {exc}",
+                            )
+                        ) from exc
+
+                teardown_stack.callback(_push_experiment_repository)
+
+            run_environment_request = RunEnvironmentRequest(
+                log_dir=log_dir,
+                workspace=project_root,
+                workspace_sources=(),
+                ref_dir=ref_dir,
+                backend=backend_impl,
+                agent_backend=resolved_backend,
+                cli_provider=resolved_cli_provider,
+                run_id=run_id,
+                objective=objective,
+                objective_document=objective_document,
+                accuracy_command=accuracy_command,
+                benchmark_command=benchmark_command,
+                benchmark_output_argument=benchmark_output_argument,
+                evaluator_package_root=evaluator_package_root,
+                evaluator_tools_root=evaluator_tools_root,
+                profiler_support_path=profiler_support_path,
+                profiler_support_name=profiler_support_name,
+                git_history_root=git.history_root,
+                environment_bind_mounts=environment_patch.bind_mounts,
+                log=logger.lprint,
+                framework_root=PROJECT_ROOT,
+                project_path_policy=project_path_policy,
+                state_namespace=project_state.local_namespace(run_id, "skypilot"),
+            )
+            session = teardown_stack.enter_context(environment.open(run_environment_request))
+        with boot_trace.span("device_monitor_start"):
+            # Snapshot the agent-facing commands once the session is open; the
+            # view's paths are fixed for the session lifetime.
+            commands = RunCommands(
+                judge_accuracy_command=session.view.paths.accuracy_command,
+                judge_benchmark_command=session.view.paths.benchmark_command,
+                profiler_support_agent_path=session.view.paths.profiler_support,
+                profiler_benchmark_command=session.view.paths.benchmark_command,
+            )
+
+            # Start backend-specific background monitoring (CUDA: nvidia-smi).
+            device = DeviceLease(backend_impl, log_dir=log_dir, run_environment_view=session.view)
+            teardown_stack.callback(device.close)
+            device.start_monitor()
+
+        # A microservice candidate is a container topology, so its local agent needs
+        # resources the default confinement withholds. Other domains keep the
+        # narrower default set.
+        agent_host_resources = task_agent_host_resources(
+            container_topology=profiler_domain is DomainName.MICROSERVICES,
+            cli_sandboxed=session.view.cli_sandboxed,
+            task_name=task_name,
+            evaluator_package_root=evaluator_package_root,
+            evaluator_tool_roots=evaluator_tool_roots,
+        )
+
+        with boot_trace.span("agent_client_build"):
+            # Build the backend-agnostic agent client. Loops invoke this instead
+            # of calling create_deep_agent / vibesys._agent_cli directly. The cli
+            # backend is rejected if --docker is set; build_agent_client raises
+            # SystemExit with a clear message in that case.
+            agent_client = build_agent_client(
+                config,
+                agent_backend=agent_backend,
+                cli_provider=cli_provider,
+                backends={
+                    "implementer": session.sandbox,
+                    "judge": session.sandbox,
+                    # Perf eval reuses the implementer's backend today (loop.py:564),
+                    # so the runner picks the same one when kind="perf_eval".
+                    "perf_eval": session.sandbox,
+                    # Profiler also reuses the implementer's backend — it needs
+                    # shell access to start/stop the server and run nsys.
+                    "profiler": session.sandbox,
+                    # Orchestrator (orchestrate loop) inspects the workspace
+                    # and writes plans — reuse the implementer's backend for
+                    # file access.
+                    "orchestrator": session.sandbox,
+                },
+                skills=[src.name for src in skill_source_paths],
+                skill_source_dirs=skill_source_paths,
+                compute_backend=backend,
+                model=model,
+                model_name=model_name,
+                run_log_file=logger.writer,
+                use_docker=session.view.cli_sandboxed,
+                log_dir=log_dir,
+                project_path_policy=project_path_policy,
+                require_host_sandbox=not session.view.cli_sandboxed,
+                host_resources=agent_host_resources,
+            )
+        close_agent_client = getattr(agent_client, "close", None)
+        if callable(close_agent_client):
+            teardown_stack.callback(close_agent_client)
+
         result = _RunContext(
             backend=backend,
             run_environment=environment,
-            supervisor=supervisor,
+            integration=integration,
             logger=logger,
             paths=paths,
             debug=debug,
@@ -1130,6 +952,8 @@ def _assemble_run_context(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: 
             workspace_sources=(),
             evaluator_path=evaluator_source,
             evaluator_package_root=evaluator_package_root,
+            evaluator_tools_root=evaluator_tools_root,
+            evaluator_tool_roots=evaluator_tool_roots,
             effective_objective=objective,
             accuracy_command=accuracy_command,
             benchmark_command=benchmark_command,
@@ -1153,16 +977,46 @@ def _assemble_run_context(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: 
             state=RunState(project, git, run_id),
             run_id=run_id,
             round_transaction_coordinator=round_transaction_coordinator,
-            experiment_chat=experiment_chat,
-            chat_thread_services=chat_thread_services,
+            agent_host_resources=agent_host_resources,
         )
-    except BaseException as construction_error:
-        if supervisor is not None:
-            supervisor.set_chat_thread_factory(None)
-        _close_after_construction_failure(experiment_chat_owner, construction_error)
-        raise
-    experiment_chat_owner.pop_all()
-    construction_complete = True
+        detach_run = integration.attach_run(
+            RunAttachment(
+                project=project,
+                run_id=run_id,
+                workspace=project_root,
+                log_dir=log_dir,
+                agent_backend=resolved_backend,
+                agent_defaults=AgentSelection(
+                    driver=resolve_agent_driver(config),
+                    provider=resolved_cli_provider,
+                    model=model_name,
+                    role_models=tuple(
+                        role.model
+                        for role in (config.agent.outer, config.agent.inner)
+                        if role.model is not None
+                    ),
+                ),
+                agent_runtime=AgentRuntimeResources(
+                    config=config,
+                    compute_backend=backend,
+                    model=model,
+                    skills=tuple(source.name for source in skill_source_paths),
+                    skill_source_dirs=tuple(skill_source_paths),
+                    environment=environment,
+                    environment_request=run_environment_request,
+                    run_environment_sandboxed=session.view.cli_sandboxed,
+                    project_path_policy=project_path_policy,
+                    host_resources=agent_host_resources,
+                ),
+            )
+        )
+        if detach_run is not None:
+            teardown_stack.callback(detach_run)
+        construction_complete = True
+    # Assembly's spans, including the enclosing one that just closed with the
+    # total. The run log gets them in completion order: children, then parent.
+    for line in boot_trace.drain_log_lines():
+        logger.lprint(line)
     return result
 
 
@@ -1287,6 +1141,7 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
                 accuracy_command=parent.accuracy_command,
                 benchmark_command=parent.benchmark_command,
                 evaluator_package_root=parent.evaluator_package_root,
+                evaluator_tools_root=parent.evaluator_tools_root,
                 profiler_support_path=parent.profiler_support_path,
                 profiler_support_name=parent.profiler_support_name,
                 git_history_root=parent.git.history_root,
@@ -1312,7 +1167,6 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
         backends={
             "implementer": session.sandbox,
             "judge": session.sandbox,
-            "chat": session.sandbox,
             "perf_eval": session.sandbox,
             "profiler": session.sandbox,
             "orchestrator": session.sandbox,
@@ -1327,6 +1181,10 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
         log_dir=log_dir,
         project_path_policy=project_path_policy,
         require_host_sandbox=not session.view.cli_sandboxed,
+        # A candidate runs the same domain as its parent, so it needs the same
+        # container access; recomputing is impossible here because a candidate
+        # context carries neither the profiler domain nor the task name.
+        host_resources=parent.agent_host_resources,
     )
     close_agent_client = getattr(agent_client, "close", None)
     if callable(close_agent_client):
@@ -1341,7 +1199,7 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
     return _RunContext(
         backend=parent.backend,
         run_environment=parent.run_environment,
-        supervisor=None,  # candidates never own the TUI/chat handler
+        integration=parent.integration,
         logger=logger,
         paths=paths,
         debug=parent.debug,
@@ -1352,6 +1210,8 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
         workspace_sources=parent.workspace_sources,
         evaluator_path=parent.evaluator_path,
         evaluator_package_root=parent.evaluator_package_root,
+        evaluator_tools_root=parent.evaluator_tools_root,
+        evaluator_tool_roots=parent.evaluator_tool_roots,
         effective_objective=effective_objective,
         accuracy_command=parent.accuracy_command,
         benchmark_command=parent.benchmark_command,
@@ -1376,221 +1236,8 @@ def _assemble_candidate_context(  # noqa: PLR0913  # tracked: #288
         project=parent.project,
         state=parent.state,
         run_id=parent.run_id,
+        agent_host_resources=parent.agent_host_resources,
     )
-
-
-@dataclass(frozen=True)
-class _ExperimentChatDependencies:
-    supervisor: "RunSupervisor"
-    agent_client: AgentClient
-    workspace: Path
-    log_dir: Path
-    project: Project
-    run_id: str
-    log: Callable[[str], None]
-    flush_logs: Callable[[], None]
-    environment: Callable[[], dict[str, str]]
-    progress: Callable[[], AgentProgress | None]
-    # The agent selection this service's client was built with. Chat runs
-    # through its own client rather than ExecutionContext.invoke, so the
-    # selection has to travel with the service for its executions to carry the
-    # same runtime identity a round agent's do.
-    driver: str
-    provider: str
-    model: str
-    # None is the default thread, which keeps the legacy _vibesys_chat/ layout
-    # so existing workspaces resume their conversation unchanged. A created
-    # thread owns _vibesys_chat/threads/<thread-id>/ instead.
-    thread_id: str | None = None
-
-
-class _ExperimentChatService:
-    """Own one chat agent and the durable evidence it may inspect."""
-
-    def __init__(
-        self, dependencies: _ExperimentChatDependencies, resources: ExitStack | None = None
-    ) -> None:
-        self._supervisor = dependencies.supervisor
-        self._agent_client = dependencies.agent_client
-        self._workspace = dependencies.workspace
-        self._log_dir = dependencies.log_dir
-        self._project = dependencies.project
-        self._run_id = dependencies.run_id
-        self._log = dependencies.log
-        self._flush_logs = dependencies.flush_logs
-        self._environment = dependencies.environment
-        self._progress = dependencies.progress
-        self._driver = dependencies.driver
-        self._provider = dependencies.provider
-        self._model = dependencies.model
-        self._thread_id = dependencies.thread_id
-        self._resources = resources
-        self._lock = threading.Lock()
-        relative = (self._state_dir).relative_to(self._workspace).as_posix()
-        self._system_prompt = _experiment_chat_system_prompt(f"{relative}/conversation.jsonl")
-        self._continuation_prompt = _experiment_chat_continuation_prompt(
-            f"{relative}/instructions.md", f"{relative}/conversation.jsonl"
-        )
-        self._history = self._load_history()
-
-    def ask(self, question: str) -> str:
-        """Answer one question from current run evidence."""
-        from vibesys.server.inspector import RunInspector  # noqa: PLC0415
-
-        with self._lock:
-            self._sync_trajectory()
-
-            def fallback() -> str:
-                diagnostic = RunInspector(self._supervisor).answer(question)
-                return f"Chat agent did not return an answer.\n\nFallback diagnostic:\n{diagnostic}"
-
-            system_prompt = self._continuation_prompt if self._history else self._system_prompt
-            execution = self._supervisor.start_agent_execution(
-                "chat",
-                "experiment-chat",
-                question,
-                system_prompt,
-                consume_steering=False,
-                participates_in_run_control=False,
-                driver=self._driver,
-                provider=self._provider,
-                model=self._model,
-            )
-            answer: str | None = None
-            error: BaseException | None = None
-            with self._supervisor.presentation_scope(
-                agent_kind="chat",
-                round_label="experiment-chat",
-                invocation_id=execution.execution_id,
-            ):
-                try:
-                    answer = self._agent_client.invoke_text(
-                        kind="chat",
-                        workspace=self._workspace,
-                        system_prompt=system_prompt,
-                        env=self._environment(),
-                        user_prompt=question,
-                        round_label="experiment chat",
-                        invocation_id=execution.execution_id,
-                        progress=self._progress(),
-                    )
-                except BaseException as exc:
-                    error = exc
-                    if isinstance(exc, Exception):
-                        raise RuntimeError(  # noqa: TRY003, TRY004
-                            f"Chat agent failed: {type(exc).__name__}: {exc}"
-                        ) from exc
-                    raise
-                finally:
-                    self._supervisor.after_agent(
-                        "chat",
-                        "experiment-chat",
-                        result=answer,
-                        error=error,
-                        execution_id=execution.execution_id,
-                    )
-            assert answer is not None  # noqa: S101
-            if not answer.strip():
-                answer = fallback()
-            self._history.append((question, answer))
-            self._append_exchange(question, answer)
-            return answer
-
-    def close(self) -> None:
-        """Close resources owned by a dedicated terminal chat session."""
-        resources, self._resources = self._resources, None
-        if resources is not None:
-            resources.close()
-
-    @property
-    def _state_dir(self) -> Path:
-        base = self._workspace / _CHAT_STATE_DIR
-        return base if self._thread_id is None else base / "threads" / self._thread_id
-
-    @property
-    def _shared_state_dir(self) -> Path:
-        """Root of the trajectory snapshots every thread reads."""
-        return self._workspace / _CHAT_STATE_DIR
-
-    def _load_history(self) -> list[tuple[str, str]]:
-        transcript = self._state_dir / "conversation.jsonl"
-        if not transcript.is_file():
-            return []
-        history: list[tuple[str, str]] = []
-        try:
-            for line in transcript.read_text(encoding="utf-8").splitlines():
-                payload = json.loads(line)
-                question = payload.get("question")
-                answer = payload.get("answer")
-                if isinstance(question, str) and isinstance(answer, str):
-                    history.append((question, answer))
-        except (OSError, json.JSONDecodeError, AttributeError):
-            return []
-        return history
-
-    def _append_exchange(self, question: str, answer: str) -> None:
-        try:
-            self._state_dir.mkdir(parents=True, exist_ok=True)
-            with (self._state_dir / "conversation.jsonl").open("a", encoding="utf-8") as transcript:
-                transcript.write(
-                    json.dumps({"question": question, "answer": answer}, ensure_ascii=False) + "\n"
-                )
-        except OSError as exc:
-            self._log(f"[warn] could not persist experiment chat: {exc}")
-
-    def _sync_trajectory(self) -> None:
-        # Trajectory snapshots stay in the shared chat root: they are the same
-        # read-only evidence for every thread, refreshed by whichever thread
-        # asks next.
-        trajectory_dir = self._shared_state_dir / "trajectory"
-        if self._state_dir.is_symlink() or self._shared_state_dir.is_symlink():
-            self._log(f"[warn] experiment chat state is a symlink: {self._state_dir}")
-            return
-        try:
-            self._state_dir.mkdir(parents=True, exist_ok=True)
-            (self._state_dir / "instructions.md").write_text(self._system_prompt, encoding="utf-8")
-            self._flush_logs()
-            with _CHAT_TRAJECTORY_SYNC_LOCK:
-                if trajectory_dir.is_symlink():
-                    trajectory_dir.unlink()
-                elif trajectory_dir.exists():
-                    shutil.rmtree(trajectory_dir)
-                trajectory_dir.mkdir(parents=True, exist_ok=True)
-                self._write_trajectory_snapshot(
-                    self._project.state.portable_run_export(self._run_id),
-                    trajectory_dir / "state",
-                )
-                self._copy_trajectory_files(self._log_dir, trajectory_dir / "logs")
-        except (OSError, ValueError) as exc:
-            self._log(f"[warn] could not refresh experiment chat trajectory: {exc}")
-
-    @staticmethod
-    def _write_trajectory_snapshot(snapshot: StateSnapshot, destination_root: Path) -> None:
-        for state_file in snapshot.files:
-            if state_file.relative_path.suffix not in _CHAT_TRAJECTORY_SUFFIXES:
-                continue
-            destination = destination_root.joinpath(*state_file.relative_path.parts)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            temporary = destination.with_name(f".{destination.name}.tmp")
-            temporary.write_bytes(state_file.contents)
-            temporary.replace(destination)
-
-    @staticmethod
-    def _copy_trajectory_files(source_root: Path, destination_root: Path) -> None:
-        if not source_root.is_dir():
-            return
-        for source in sorted(source_root.rglob("*")):
-            if (
-                not source.is_file()
-                or source.is_symlink()
-                or source.suffix not in _CHAT_TRAJECTORY_SUFFIXES
-            ):
-                continue
-            destination = destination_root / source.relative_to(source_root)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            temporary = destination.with_name(f".{destination.name}.tmp")
-            shutil.copyfile(source, temporary)
-            temporary.replace(destination)
 
 
 class _RunContext:
@@ -1614,7 +1261,7 @@ class _RunContext:
         *,
         backend: ComputeBackend,
         run_environment: RunEnvironment,
-        supervisor: "RunSupervisor | None",
+        integration: RunIntegration,
         logger: RunLogger,
         paths: RunPaths,
         debug: bool,
@@ -1625,6 +1272,8 @@ class _RunContext:
         workspace_sources: tuple[WorkspaceSource, ...],
         evaluator_path: Path | None,
         evaluator_package_root: Path | None,
+        evaluator_tools_root: Path | None,
+        evaluator_tool_roots: tuple[Path, ...],
         effective_objective: str | None,
         accuracy_command: str,
         benchmark_command: str,
@@ -1648,12 +1297,16 @@ class _RunContext:
         state: RunState,
         run_id: str,
         round_transaction_coordinator: RoundTransactionCoordinator | None = None,
-        experiment_chat: _ExperimentChatService | None = None,
-        chat_thread_services: list[_ExperimentChatService] | None = None,
+        agent_host_resources: tuple[HostResource, ...] = (),
     ):
         self.backend = backend
+        # Retained so a candidate sub-context can hand its own agent runner the
+        # same declarations the parent computed, rather than recomputing them
+        # from state a candidate context does not carry.
+        self.agent_host_resources = agent_host_resources
         self.run_environment = run_environment
-        self.supervisor = supervisor
+        self.integration = integration
+        self.events = integration.events
         self.logger = logger
         self._paths = paths
         self.debug = debug
@@ -1664,6 +1317,8 @@ class _RunContext:
         self.workspace_sources = workspace_sources
         self.evaluator_path = evaluator_path
         self.evaluator_package_root = evaluator_package_root
+        self.evaluator_tools_root = evaluator_tools_root
+        self.evaluator_tool_roots = evaluator_tool_roots
         self.effective_objective = effective_objective
         self.accuracy_command = accuracy_command
         self.benchmark_command = benchmark_command
@@ -1696,15 +1351,7 @@ class _RunContext:
         self.selected_gpu = device.selected_device
         self.agent_client = agent_client
         self._closed = False
-        self._experiment_chat = experiment_chat
-        # Created chat threads share the run's lifetime: the factory that
-        # builds them appends here, and close() below tears them down.
-        self._chat_thread_services = (
-            chat_thread_services if chat_thread_services is not None else []
-        )
         self._progress_stack: list[AgentProgress] = []
-        if self.supervisor is not None and self._experiment_chat is not None:
-            self.supervisor.set_chat_handler(self._experiment_chat.ask)
 
     # -- path passthroughs ----------------------------------------------------
     # Canonical values live in the frozen ``RunPaths`` record.
@@ -1809,22 +1456,67 @@ class _RunContext:
         ``agent_client.invoke`` unchanged so loop-specific options
         (e.g. ``iteration=`` for plain-loop runner extensions) still work.
         """
-        supervisor = getattr(self, "supervisor", None)
-        execution_id: str | None = None
-        if supervisor is not None:
-            client = self.agent_client
-            model_for_kind = getattr(client, "model_for_kind", None)
-            execution = supervisor.start_agent_execution(
+        client = self.agent_client
+        model_for_kind = getattr(client, "model_for_kind", None)
+        driver = _optional_string(getattr(client, "driver_name", None))
+        provider = _optional_string(getattr(client, "provider", None))
+        model = _optional_string(model_for_kind(kind)) if callable(model_for_kind) else None
+        execution = self.integration.invocations.start(
+            kind,
+            round_label,
+            user_prompt,
+            system_prompt,
+            driver=driver,
+            provider=provider,
+            model=model,
+        )
+        user_prompt = execution.user_prompt
+        execution_id = execution.execution_id
+        event_fields: dict[str, Any] = {
+            "agent_kind": kind,
+            "round_label": round_label,
+            "execution_id": execution_id,
+        }
+        attempt = _attempt_from_label(round_label)
+        try:
+            self.events.emit(
+                CoreEventType.AGENT_EXECUTION_STARTED,
+                status=EventStatus.ACTIVE,
+                data=AgentExecutionStartedData(
+                    stage=kind,
+                    attempt=attempt,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    activity=AgentExecutionActivityData(
+                        mode="thinking",
+                        summary=f"{kind.replace('_', ' ').title()} is working",
+                    ),
+                    driver=driver,
+                    provider=provider,
+                    model=model,
+                ),
+                **event_fields,
+            )
+            self.events.emit(
+                CoreEventType.PHASE_STARTED,
+                status=EventStatus.ACTIVE,
+                data=PhaseData(phase=kind, attempt=attempt),
+                **event_fields,
+            )
+            self.events.emit(
+                CoreEventType.INVOCATION_STARTED,
+                status=EventStatus.ACTIVE,
+                data=InvocationStartedData(system_prompt=system_prompt, user_prompt=user_prompt),
+                **event_fields,
+            )
+        except BaseException as lifecycle_error:
+            self.integration.invocations.finish(
                 kind,
                 round_label,
-                user_prompt,
-                system_prompt,
-                driver=getattr(client, "driver_name", None),
-                provider=getattr(client, "provider", None),
-                model=model_for_kind(kind) if callable(model_for_kind) else None,
+                error=lifecycle_error,
+                execution_id=execution_id,
             )
-            user_prompt = execution.user_prompt
-            execution_id = execution.execution_id
+            raise
         result: T | None = None
         error: BaseException | None = None
         try:
@@ -1846,22 +1538,45 @@ class _RunContext:
             error = exc
             raise
         finally:
-            if supervisor is not None:
-                supervisor.after_agent(
+            status = _execution_status(error)
+            error_text = f"{type(error).__name__}: {error}" if error is not None else None
+            lifecycle_error: BaseException | None = None
+            try:
+                self.events.emit(
+                    CoreEventType.AGENT_EXECUTION_FINISHED,
+                    status=status,
+                    data=AgentExecutionFinishedData(result=json_value(result), error=error_text),
+                    **event_fields,
+                )
+                self.events.emit(
+                    CoreEventType.INVOCATION_FINISHED,
+                    status=status,
+                    data=InvocationFinishedData(result=json_value(result), error=error_text),
+                    **event_fields,
+                )
+                self.events.emit(
+                    CoreEventType.PHASE_FINISHED,
+                    status=status,
+                    data=PhaseData(phase=kind, attempt=attempt),
+                    **event_fields,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                lifecycle_error = exc
+            finally:
+                self.integration.invocations.finish(
                     kind,
                     round_label,
                     result=result,
-                    error=error,
+                    error=error or lifecycle_error,
                     execution_id=execution_id,
                 )
-
-    def chat(self, question: str) -> str:
-        """Ask the experiment analysis agent about current run evidence."""
-        if self._experiment_chat is None:
-            raise RuntimeError(  # noqa: TRY003
-                "Experiment chat is not owned by this run context"
-            )
-        return self._experiment_chat.ask(question)
+            if lifecycle_error is not None:
+                if error is None:
+                    raise lifecycle_error
+                error.add_note(
+                    "Additional error while recording invocation completion: "
+                    f"{type(lifecycle_error).__name__}: {lifecycle_error}"
+                )
 
     def wait_for_debug(self, step: str) -> None:
         if self.debug:
@@ -1922,57 +1637,13 @@ class _RunContext:
         # Mirror backend state on _RunContext for legacy callers/tests.
         self.selected_gpu = self.device.selected_device
 
-    def _close_chat_surfaces(self) -> BaseException | None:
-        """Tear down the default chat and every created thread's resources."""
-        chat_error: BaseException | None = None
-        experiment_chat, self._experiment_chat = self._experiment_chat, None
-        chat_threads, self._chat_thread_services = list(self._chat_thread_services), []
-        if self.supervisor is not None:
-            try:
-                # Threads never outlive the run context, even when a retained
-                # terminal presentation keeps the default chat handler alive.
-                self.supervisor.clear_chat_threads_and_drain()
-            except BaseException as exc:  # noqa: BLE001  # resource close must still run
-                chat_error = exc
-        if self.supervisor is not None and experiment_chat is not None:
-            try:
-                self.supervisor.clear_chat_handler_and_drain()
-            except BaseException as exc:  # noqa: BLE001  # resource close must still run
-                chat_error = chat_error or exc
-        for chat_service in [*chat_threads, *([experiment_chat] if experiment_chat else [])]:
-            try:
-                chat_service.close()
-            except BaseException as exc:  # noqa: BLE001  # primary teardown must still run
-                if chat_error is None:
-                    chat_error = exc
-                else:
-                    chat_error.add_note(
-                        f"Experiment chat cleanup also failed: {type(exc).__name__}: {exc}"
-                    )
-        return chat_error
-
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        chat_error = self._close_chat_surfaces()
-        primary_error: BaseException | None = None
-        try:
-            # Unwinds in reverse construction order: device monitor stop +
-            # gpu.json finalization, environment hook teardown, run-environment
-            # session exit, stderr restore + log file close.
-            self._teardown_stack.close()
-        except BaseException as exc:  # noqa: BLE001
-            primary_error = exc
-        if primary_error is not None:
-            if chat_error is not None:
-                primary_error.add_note(
-                    "Experiment chat teardown also failed: "
-                    f"{type(chat_error).__name__}: {chat_error}"
-                )
-            raise primary_error
-        if chat_error is not None:
-            raise chat_error
+        # Unwinds in reverse construction order: device monitor stop,
+        # environment teardown, run-environment exit, and log closure.
+        self._teardown_stack.close()
 
     def __enter__(self) -> "_RunContext":
         return self

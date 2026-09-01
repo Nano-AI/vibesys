@@ -4,6 +4,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from vs_sandbox import BeforeReadyContext, SandboxLifecycleError, SandboxLifecycleHooks
+
+
+class _RecordingHooks(SandboxLifecycleHooks):
+    def __init__(self, invocations: list[object]) -> None:
+        self._invocations = invocations
+
+    def before_ready(self, context: BeforeReadyContext) -> None:
+        self._invocations.append(context.sandbox)
+
+
+class _FailingHooks(SandboxLifecycleHooks):
+    def before_ready(self, context: BeforeReadyContext) -> None:  # noqa: ARG002
+        raise ValueError("setup exploded")  # noqa: TRY003
+
+
+class _FailOnSecondInvocationHooks(SandboxLifecycleHooks):
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    def before_ready(self, context: BeforeReadyContext) -> None:  # noqa: ARG002
+        self.invocations += 1
+        if self.invocations == 2:
+            raise ValueError("replacement setup exploded")  # noqa: TRY003
+
 
 @pytest.fixture
 def mock_modal(monkeypatch):  # noqa: ANN001, ANN201  # tracked: #288
@@ -37,7 +62,8 @@ def mock_modal(monkeypatch):  # noqa: ANN001, ANN201  # tracked: #288
     fake_objects = MagicMock()
     monkeypatch.setattr(modal.App, "lookup", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr(modal.Image, "from_registry", MagicMock(return_value=MagicMock()))
-    monkeypatch.setattr(modal.Sandbox, "create", MagicMock(return_value=fake_sandbox))
+    create_sandbox = MagicMock(return_value=fake_sandbox)
+    monkeypatch.setattr(modal.Sandbox, "create", create_sandbox)
     monkeypatch.setattr(modal.Volume, "from_name", MagicMock(return_value=fake_volume))
     monkeypatch.setattr(modal.Volume, "objects", fake_objects)
     yield {
@@ -45,6 +71,7 @@ def mock_modal(monkeypatch):  # noqa: ANN001, ANN201  # tracked: #288
         "proc": fake_proc,
         "volume": fake_volume,
         "objects": fake_objects,
+        "create": create_sandbox,
     }
 
     leaked = list(_live_sandboxes)
@@ -92,19 +119,15 @@ class TestVpath:
 
 
 class TestStart:
-    def test_start_creates_sandbox_with_gpu_and_timeout(self, sandbox, mock_modal):  # noqa: ANN001, ANN201, ARG002  # tracked: #288
-        import modal  # noqa: PLC0415  # tracked: #288
-
+    def test_start_creates_sandbox_with_gpu_and_timeout(self, sandbox, mock_modal):  # noqa: ANN001, ANN201  # tracked: #288
         sandbox.start()
-        modal.Sandbox.create.assert_called_once()
-        kwargs = modal.Sandbox.create.call_args.kwargs
+        mock_modal["create"].assert_called_once()
+        kwargs = mock_modal["create"].call_args.kwargs
         assert kwargs["gpu"] == "H100"
         assert kwargs["workdir"] == "/workspace"
         assert "/workspace" in kwargs["volumes"]
 
-    def test_start_mounts_model_volume_when_name_given(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201, ARG002  # tracked: #288
-        import modal  # noqa: PLC0415  # tracked: #288
-
+    def test_start_mounts_model_volume_when_name_given(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201  # tracked: #288
         from vs_sandbox.modal_sandbox import ModalSandbox  # noqa: PLC0415  # tracked: #288
 
         with ModalSandbox(
@@ -112,7 +135,7 @@ class TestStart:
             image="nvcr.io/nvidia/pytorch:25.04-py3",
             model_volume_name="vibesys-models",
         ):
-            kwargs = modal.Sandbox.create.call_args.kwargs
+            kwargs = mock_modal["create"].call_args.kwargs
             assert "/model" in kwargs["volumes"]
 
     def test_start_uploads_bind_mounts_into_workspace_volume(  # noqa: ANN201  # tracked: #288
@@ -206,6 +229,108 @@ class TestStart:
             assert not any("exp_env" in c for c in uploaded)
             assert not any(".venv" in c for c in uploaded)
             assert not any(".git" in c for c in uploaded)
+
+    def test_lifecycle_hooks_run_before_ready(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201, ARG002
+        from vs_sandbox.modal_sandbox import ModalSandbox  # noqa: PLC0415
+
+        invocations: list[object] = []
+        sb = ModalSandbox(
+            host_workspace=str(tmp_path),
+            image="nvcr.io/nvidia/pytorch:25.04-py3",
+            lifecycle_hooks=[_RecordingHooks(invocations)],
+        )
+
+        try:
+            sb.start()
+            assert invocations == [sb]
+        finally:
+            sb.stop()
+
+    def test_init_failure_skips_hooks_and_cleans_up(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201
+        from vs_sandbox.modal_sandbox import ModalSandbox, _live_sandboxes  # noqa: PLC0415
+
+        invocations: list[object] = []
+        mock_modal["proc"].wait.side_effect = [0, 17]
+        sb = ModalSandbox(
+            host_workspace=str(tmp_path),
+            image="nvcr.io/nvidia/pytorch:25.04-py3",
+            extra_init_commands=["install-required-tool"],
+            lifecycle_hooks=[_RecordingHooks(invocations)],
+        )
+
+        with pytest.raises(RuntimeError, match="Modal sandbox init command failed"):
+            sb.start()
+
+        assert invocations == []
+        assert sb._sandbox is None  # noqa: SLF001
+        assert not _live_sandboxes
+        mock_modal["sandbox"].terminate.assert_called_once()
+        mock_modal["objects"].delete.assert_called_once()
+
+    def test_lifecycle_failure_cleans_up_sandbox_and_volume(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201
+        from vs_sandbox.modal_sandbox import ModalSandbox, _live_sandboxes  # noqa: PLC0415
+
+        sb = ModalSandbox(
+            host_workspace=str(tmp_path),
+            image="nvcr.io/nvidia/pytorch:25.04-py3",
+            lifecycle_hooks=[_FailingHooks()],
+        )
+
+        with pytest.raises(SandboxLifecycleError, match="_FailingHooks failed") as error:
+            sb.start()
+
+        assert isinstance(error.value.__cause__, ValueError)
+        assert sb._sandbox is None  # noqa: SLF001
+        assert not _live_sandboxes
+        mock_modal["sandbox"].terminate.assert_called_once()
+        mock_modal["objects"].delete.assert_called_once()
+
+    def test_lifecycle_hooks_replay_on_fallback_replacement(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201
+        from vs_sandbox.modal_sandbox import ModalSandbox  # noqa: PLC0415
+
+        invocations: list[object] = []
+        sb = ModalSandbox(
+            host_workspace=str(tmp_path),
+            image="nvcr.io/nvidia/pytorch:25.04-py3",
+            lifecycle_hooks=[_RecordingHooks(invocations)],
+        )
+
+        try:
+            sb.start()
+            assert sb._restart_sandbox()  # noqa: SLF001
+            assert invocations == [sb, sb]
+            assert mock_modal["create"].call_count == 2
+        finally:
+            sb.stop()
+
+    def test_failed_replacement_cleans_container_but_preserves_volume_until_stop(  # noqa: ANN201
+        self,
+        tmp_path,  # noqa: ANN001
+        mock_modal,  # noqa: ANN001
+    ):
+        from vs_sandbox.modal_sandbox import ModalSandbox, _live_sandboxes  # noqa: PLC0415
+
+        hooks = _FailOnSecondInvocationHooks()
+        sb = ModalSandbox(
+            host_workspace=str(tmp_path),
+            image="nvcr.io/nvidia/pytorch:25.04-py3",
+            lifecycle_hooks=[hooks],
+        )
+
+        sb.start()
+        workspace_volume_name = sb._workspace_volume_name  # noqa: SLF001
+        assert not sb._restart_sandbox()  # noqa: SLF001
+        assert hooks.invocations == 2
+        assert sb._sandbox is None  # noqa: SLF001
+        assert not _live_sandboxes
+        assert sb._workspace_volume_name == workspace_volume_name  # noqa: SLF001
+        mock_modal["objects"].delete.assert_not_called()
+
+        sb.stop()
+        mock_modal["objects"].delete.assert_called_once_with(
+            workspace_volume_name,
+            allow_missing=True,
+        )
 
     def test_start_uploads_minimal_codex_auth_snapshot(  # noqa: ANN201  # tracked: #288
         self,
@@ -469,10 +594,8 @@ class TestSandboxFallbackRestart:
             assert resp.exit_code == -1
             assert "already shut down" in resp.output.lower()
 
-    def test_extra_readonly_volumes_are_mounted(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201, ARG002  # tracked: #288
+    def test_extra_readonly_volumes_are_mounted(self, tmp_path, mock_modal):  # noqa: ANN001, ANN201  # tracked: #288
         """Auxiliary volumes like /draft_model should be added to volumes dict."""
-        import modal  # noqa: PLC0415  # tracked: #288
-
         from vs_sandbox.modal_sandbox import ModalSandbox  # noqa: PLC0415  # tracked: #288
 
         with ModalSandbox(
@@ -480,7 +603,7 @@ class TestSandboxFallbackRestart:
             image="nvcr.io/nvidia/pytorch:25.04-py3",
             extra_readonly_volumes={"/draft_model": "vibesys-model-eagle3"},
         ):
-            kwargs = modal.Sandbox.create.call_args.kwargs
+            kwargs = mock_modal["create"].call_args.kwargs
             assert "/draft_model" in kwargs["volumes"]
 
 

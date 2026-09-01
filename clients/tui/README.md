@@ -8,7 +8,7 @@ vs --help
 ```
 
 The package installs `vs` and `vibesys` as aliases for the same launcher. The
-launcher starts the Python VibeSys backend with `python -m vibesys --headless`
+launcher starts the Python VibeSys server with `python -m entrypoints.server`
 from the current directory and then attaches the OpenTUI client. The launcher
 passes run arguments through unchanged. With no `--input`, the current
 directory is the in-place project; pass `--input PATH` to select another
@@ -69,9 +69,14 @@ with no recorded agent time is headed `Round N flow` alone.
 
 `Measured` shows the verified metric for the round that resolved the
 hypothesis, as a delta against the last measurement preceding it once there is
-one to compare against. The framework records a verified metric only when its
-own official evaluation ran, on the sparse cadence or the final round, so a
-hypothesis resolved between evaluations legitimately shows no measurement.
+one to compare against, or as the absolute value with its unit before that.
+When every measured hypothesis shares one objective direction the column
+header carries it as an arrow (`Measured ↑` for maximize, `↓` for minimize),
+so a signed delta reads as good or bad without task knowledge. The hypothesis
+summary spells the measurement out in words: metric name, direction, absolute
+value, baseline, and delta. The framework records a verified metric only when
+its own official evaluation ran, on the sparse cadence or the final round, so
+a hypothesis resolved between evaluations legitimately shows no measurement.
 
 The table refetches when an agent phase or a round finishes, so it stays
 current without being reopened. Rows are ordered by first round and never
@@ -264,10 +269,10 @@ pnpm check:clients
 pnpm test:clients
 pnpm build:clients
 pnpm check:ts
-uv run pytest tests/test_tui.py tests/agents/test_callbacks.py tests/render/test_sink.py
+uv run pytest tests/server tests/vibesys/agents/test_callbacks.py tests/vibesys/render/test_sink.py
 ```
 
 After changing Python protocol models, regenerate both files in
 `clients/backend-client/src/generated/` and review their diff. The test suite covers reducer behavior,
 OpenTUI frames and navigation, launcher cleanup, socket fragmentation and
-timeouts, replay/live delivery, and the Python supervision service.
+timeouts, replay/live delivery, and the Python server.

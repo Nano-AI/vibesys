@@ -196,9 +196,7 @@ class CliAgentRunner:
         # tests that don't care about usage).
         self._log_dir = log_dir
         # Cache agent instances per kind so session IDs persist across
-        # invocations (enables conversation continuation). Experiment chat is
-        # the exception: its history is carried explicitly in each prompt, so
-        # it must not depend on provider-side session state.
+        # invocations when the caller requests reuse.
         self._agents: dict[str, CodingAgent] = {}
         self._session_turn_counts: dict[str, int] = {}
 
@@ -376,12 +374,9 @@ class CliAgentRunner:
             invocation_id=invocation_id,
         )
 
-        # Reuse or construct the underlying agent. Reusing preserves the
-        #    session_id so the CLI tool can resume the conversation. Chat owns
-        #    its multi-turn history in the prompt, and provider session IDs can
-        #    become unavailable when a sandbox or process changes, so every
-        #    chat turn deliberately starts a fresh CLI session.
-        reuse_agent = kind != "chat" and (reuse_session if reuse_session is not None else True)
+        # Reuse or construct the underlying agent. Callers that own their own
+        # multi-turn history explicitly disable reuse.
+        reuse_agent = reuse_session if reuse_session is not None else True
         role_key = f"{kind}:{selected_model}:{selected_reasoning_effort}"
         cache_key = f"{role_key}:{session_key}" if session_key else role_key
         agent = self._agents.get(cache_key) if reuse_agent else None
@@ -394,8 +389,7 @@ class CliAgentRunner:
             if self._docker_sandboxes is not None:
                 # Dynamic poke: only the docker path constructs agents with a
                 # DockerCommandExecutor, which carries container_id.
-                executor = getattr(agent, "executor", None)
-                executor.container_id = self._docker_sandboxes[kind]._container_id  # pyright: ignore[reportOptionalMemberAccess]  # noqa: SLF001  # tracked: #288
+                agent.executor.container_id = self._docker_sandboxes[kind]._container_id  # noqa: SLF001  # tracked: #288
         elif self._docker_sandboxes is not None:
             from vibesys.agents.docker_executor import (  # noqa: PLC0415  # tracked: #288
                 DockerCommandExecutor,

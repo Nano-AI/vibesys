@@ -1,3 +1,5 @@
+import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -26,10 +28,9 @@ def isolated_vibesys_state_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 def headless_renderer() -> Iterator[HeadlessRenderer]:
     """Compose a headless renderer for every test, mirroring production.
 
-    In production ``create_run_context`` subscribes the renderer exactly once
-    per headless run; tests get the same composition so code that emits
-    events through the output sink still produces observable terminal output
-    (e.g. for ``capsys`` assertions).
+    In production the headless entrypoint installs this subscriber. Tests get
+    the same presentation composition so direct output-sink emissions remain
+    observable to ``capsys`` assertions.
     """
     renderer = HeadlessRenderer()
     unsubscribe = output_sink().subscribe(renderer.handle)
@@ -37,6 +38,26 @@ def headless_renderer() -> Iterator[HeadlessRenderer]:
         yield renderer
     finally:
         unsubscribe()
+
+
+@pytest.fixture
+def socket_dir() -> Iterator[Path]:
+    """A directory shallow enough to hold a bindable Unix socket.
+
+    ``tmp_path`` is not usable for this. It nests a per-user, per-session and
+    per-test directory under the platform temp root, and on macOS that root is
+    already a ~50-byte ``/var/folders/...`` path, so the result overruns
+    ``sockaddr_un.sun_path`` (104 bytes there, 108 on Linux) before a socket
+    name is even appended and ``bind`` fails with "AF_UNIX path too long".
+
+    Rooting the directory at ``/tmp`` keeps every path it yields far under the
+    limit on both platforms.
+    """
+    directory = Path(tempfile.mkdtemp(prefix="vibesys-sock-", dir="/tmp"))
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

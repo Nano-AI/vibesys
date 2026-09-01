@@ -1,8 +1,9 @@
 export {
   type EventSubscription,
-  SupervisionClient,
-  type SupervisionClientOptions,
-  SupervisionError,
+  ServerClient,
+  type ServerClientOptions,
+  ServerError,
+  type SubscribeOptions,
 } from './client.js';
 export type {
   ChatModelOption,
@@ -17,4 +18,5 @@ export type {
   RunEvent,
   RunSnapshot,
   ServerMessage,
+  TuiDefaults,
 } from './protocol.js';

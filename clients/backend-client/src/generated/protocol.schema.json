@@ -290,7 +290,7 @@
       "type": "object"
     },
     "AgentStatusData": {
-      "description": "Structured progress readings for one agent invocation.\n\nCarried on presentation events so renderers can format their own status\nprefix (e.g. ``[Round 3/24 | Implementer | 12.3s | 20k/1.0M]``) without\nthe backend baking any layout or styling into the payload.",
+      "description": "Structured progress readings for one agent invocation.\n\nCarried on presentation events so renderers can format their own status\nprefix (e.g. ``[Round 3/24 | Implementer | 12.3s | 20k/1.0M]``) without\nthe server baking any layout or styling into the payload.",
       "properties": {
         "progress": {
           "anyOf": [
@@ -404,7 +404,7 @@
     },
     "ChatModelOption": {
       "additionalProperties": false,
-      "description": "One model a chat thread can be started with, and where it came from.\n\n``source`` is provenance, not presentation: ``run`` is the run's own\nconfigured model, ``role`` an ``[agent.outer]``/``[agent.inner]``\noverride, ``suggested`` an entry from the backend's short curated list.",
+      "description": "One offered chat model and the source of its suggestion.",
       "properties": {
         "model": {
           "title": "Model",
@@ -434,7 +434,7 @@
     },
     "ChatOptions": {
       "additionalProperties": false,
-      "description": "Every chat agent selection this run offers, grouped by provider.\n\nThe agent driver is absent by design. Threads inherit the run's driver, so\na client never chooses one and never enumerates them.",
+      "description": "All offered chat selections grouped by provider.",
       "properties": {
         "providers": {
           "items": {
@@ -478,7 +478,7 @@
     },
     "ChatProviderOptions": {
       "additionalProperties": false,
-      "description": "One CLI provider the run's configured driver supports, with models.",
+      "description": "One supported chat provider and its suggested models.",
       "properties": {
         "provider": {
           "title": "Provider",
@@ -869,7 +869,7 @@
     },
     "Diagnostic": {
       "additionalProperties": false,
-      "description": "Structured, provider-neutral description of an operator diagnostic.",
+      "description": "Structured, provider-neutral description of an operator diagnostic.\n\nFrozen for the same reason as ``RunEvent``: diagnostics ride along on\nreplayed events, which readers share rather than copy.",
       "properties": {
         "id": {
           "title": "Id",
@@ -1014,6 +1014,12 @@
           },
           "title": "Active Executions",
           "type": "array"
+        },
+        "history_after_sequence": {
+          "default": 0,
+          "minimum": 0,
+          "title": "History After Sequence",
+          "type": "integer"
         }
       },
       "required": [
@@ -1120,6 +1126,19 @@
           "title": "After Sequence",
           "type": "integer"
         },
+        "before_sequence": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sequence"
+        },
         "timeout_ms": {
           "default": 0,
           "maximum": 30000,
@@ -1214,7 +1233,7 @@
     },
     "HypothesisEntry": {
       "additionalProperties": false,
-      "description": "One unit of investigation: a hypothesis and every round it spans.\n\n``resolved_outcome`` is copied from the backend's typed hypothesis state,\nnever recomputed by the server or client.",
+      "description": "One unit of investigation: a hypothesis and every round it spans.\n\n``resolved_outcome`` is copied from the server's typed hypothesis state,\nnever recomputed by the server or client.",
       "properties": {
         "hypothesis_id": {
           "title": "Hypothesis Id",
@@ -1339,6 +1358,46 @@
           ],
           "default": null,
           "title": "Perf Delta Pct"
+        },
+        "perf_metric_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Perf Metric Name"
+        },
+        "perf_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "max",
+                "min"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Perf Direction"
+        },
+        "perf_baseline_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Perf Baseline Value"
         },
         "kept": {
           "anyOf": [
@@ -1483,6 +1542,56 @@
         "reviewed"
       ],
       "title": "HypothesisRound",
+      "type": "object"
+    },
+    "InteractiveSetupDefaults": {
+      "additionalProperties": false,
+      "description": "JSON contract passed to the interactive launch form.",
+      "properties": {
+        "runs_dir": {
+          "title": "Runs Dir",
+          "type": "string"
+        },
+        "input_path": {
+          "title": "Input Path",
+          "type": "string"
+        },
+        "experiment_name": {
+          "title": "Experiment Name",
+          "type": "string"
+        },
+        "repository_owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Repository Owner"
+        },
+        "repository_name": {
+          "title": "Repository Name",
+          "type": "string"
+        },
+        "visibility": {
+          "$ref": "#/$defs/RepositoryVisibility"
+        },
+        "theme": {
+          "$ref": "#/$defs/TuiTheme"
+        }
+      },
+      "required": [
+        "runs_dir",
+        "input_path",
+        "experiment_name",
+        "repository_owner",
+        "repository_name",
+        "visibility",
+        "theme"
+      ],
+      "title": "InteractiveSetupDefaults",
       "type": "object"
     },
     "InvocationFinishedData": {
@@ -1666,6 +1775,102 @@
       "title": "PauseCommand",
       "type": "object"
     },
+    "PerformanceContext": {
+      "additionalProperties": false,
+      "description": "What the performance plot measures and how to read it.\n\nCopied from recorded run state and the run manifest, never recomputed.\nEvery field is optional so the section can describe the objective before\nthe first measurement and omit facts a run never recorded; a run whose\nprose is known before its metric still gets a description-only context.",
+      "properties": {
+        "objective_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Metric"
+        },
+        "objective_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Unit"
+        },
+        "objective_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "max",
+                "min"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Direction"
+        },
+        "objective_baseline_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Baseline Value"
+        },
+        "objective_baseline_round": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Baseline Round"
+        },
+        "objective_baseline_commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Baseline Commit"
+        },
+        "objective_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Description"
+        }
+      },
+      "title": "PerformanceContext",
+      "type": "object"
+    },
     "PerformanceQuery": {
       "additionalProperties": false,
       "properties": {
@@ -1807,6 +2012,16 @@
       "title": "ProtocolErrorMessage",
       "type": "object"
     },
+    "RepositoryVisibility": {
+      "description": "Supported GitHub repository visibility values.",
+      "enum": [
+        "private",
+        "public",
+        "internal"
+      ],
+      "title": "RepositoryVisibility",
+      "type": "string"
+    },
     "Response": {
       "additionalProperties": false,
       "properties": {
@@ -1897,6 +2112,17 @@
           ],
           "default": null
         },
+        "tui_defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InteractiveSetupDefaults"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "snapshot": {
           "anyOf": [
             {
@@ -1921,6 +2147,17 @@
           },
           "title": "Performance",
           "type": "array"
+        },
+        "performance_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PerformanceContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "experiments": {
           "items": {
@@ -2031,7 +2268,7 @@
     },
     "RunEvent": {
       "additionalProperties": false,
-      "description": "One reproducible human, control, or invocation event.",
+      "description": "One reproducible human, control, or invocation event.\n\nFrozen: a recorded event is a durable fact. Readers that need a variant\nbuild one with ``model_copy(update=...)`` rather than mutating a shared\nobject, which lets ``EventStore`` replay history without copying it.",
       "properties": {
         "protocol_version": {
           "const": 1,
@@ -2345,6 +2582,13 @@
           },
           "title": "Active Executions",
           "type": "array"
+        },
+        "chat_threads": {
+          "items": {
+            "$ref": "#/$defs/ChatThreadInfo"
+          },
+          "title": "Chat Threads",
+          "type": "array"
         }
       },
       "required": [
@@ -2533,6 +2777,19 @@
           "minimum": 0,
           "title": "After Sequence",
           "type": "integer"
+        },
+        "tail": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tail"
         }
       },
       "title": "SubscribeRequest",
@@ -2719,6 +2976,50 @@
       "title": "ToolResultData",
       "type": "object"
     },
+    "TuiDefaultsQuery": {
+      "additionalProperties": false,
+      "description": "Request the launch-directory configuration defaults a TUI applies.\n\nA terminal client resolves its theme from the run's configuration. Asking\nover the control channel keeps TOML parsing in the server and saves the\nlauncher an extra Python process on the boot path.",
+      "properties": {
+        "protocol_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Protocol Version",
+          "type": "integer"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "const": "query.tui_defaults",
+          "default": "query.tui_defaults",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "TuiDefaultsQuery",
+      "type": "object"
+    },
+    "TuiTheme": {
+      "description": "Selectable terminal UI themes.",
+      "enum": [
+        "dark",
+        "light",
+        "solarized-dark",
+        "solarized-light",
+        "catppuccin-mocha",
+        "catppuccin-latte",
+        "high-contrast-dark",
+        "high-contrast-light"
+      ],
+      "title": "TuiTheme",
+      "type": "string"
+    },
     "UsageUpdateData": {
       "properties": {
         "kind": {
@@ -2778,6 +3079,7 @@
           "query.history": "#/$defs/HistoryQuery",
           "query.performance": "#/$defs/PerformanceQuery",
           "query.snapshot": "#/$defs/SnapshotQuery",
+          "query.tui_defaults": "#/$defs/TuiDefaultsQuery",
           "subscribe": "#/$defs/SubscribeRequest"
         },
         "propertyName": "type"
@@ -2803,6 +3105,9 @@
         },
         {
           "$ref": "#/$defs/ChatOptionsQuery"
+        },
+        {
+          "$ref": "#/$defs/TuiDefaultsQuery"
         },
         {
           "$ref": "#/$defs/HistoryQuery"

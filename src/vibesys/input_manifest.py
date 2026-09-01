@@ -159,9 +159,9 @@ class EvaluatorInput(BaseModel):
                     "evaluator source cannot be combined with name or version"
                 )
             return self
-        if any(value is None for value in package_values):
+        if self.name is None or self.version is None:
             raise ValueError("a packaged evaluator requires both name and version")  # noqa: TRY003
-        EvaluatorPackageRequirement(name=self.name, version=self.version)  # type: ignore[arg-type]
+        EvaluatorPackageRequirement(name=self.name, version=self.version)
         return self
 
     @property
@@ -462,6 +462,20 @@ class InputBundle(BaseModel):
     def benchmark_result_protocol(self) -> Literal[2] | None:
         """Return the evaluator result protocol version the benchmark speaks."""
         return self.manifest.benchmark.result_protocol
+
+    @property
+    def provisions_trace_telemetry(self) -> bool:
+        """Whether the benchmark command captures a distributed trace graph.
+
+        OTel profiling is only meaningful when the task itself provisions
+        instrumentation and a collector and emits the two artifacts the
+        profiler reads. A benchmark that names both ``--telemetry-output`` and
+        ``--trace-graph-json`` is making exactly that declaration, so this is
+        the capability signal ``auto`` profiler resolution keys off rather than
+        a separate hand-maintained flag that could drift from the command.
+        """
+        arguments = set(self.resolved_benchmark_command)
+        return {"--telemetry-output", "--trace-graph-json"} <= arguments
 
     @property
     def modal_entrypoint(self) -> str | None:

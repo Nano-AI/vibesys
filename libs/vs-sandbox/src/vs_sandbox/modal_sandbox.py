@@ -40,6 +40,8 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 from modal.volume import AbstractVolumeUploadContextManager  # noqa: TC002  # tracked: #288
 
+from vs_sandbox.lifecycle import SandboxLifecycle, SandboxLifecycleHooks
+
 if TYPE_CHECKING:
     from types import FrameType
 
@@ -156,10 +158,11 @@ _original_sigint = signal.getsignal(signal.SIGINT)
 def _sigint_handler(signum: int, frame: FrameType | None) -> None:
     signal.signal(signal.SIGINT, _original_sigint)
     _cleanup_sandboxes()
-    if callable(_original_sigint):
-        _original_sigint(signum, frame)
-    else:
+    # signal.Handlers and signal.Signals are IntEnum, so the int/None test is
+    # the exact complement of callable() for anything getsignal() can return.
+    if _original_sigint is None or isinstance(_original_sigint, int):
         raise KeyboardInterrupt
+    _original_sigint(signum, frame)
 
 
 signal.signal(signal.SIGINT, _sigint_handler)
@@ -192,7 +195,7 @@ class ModalSandbox(BaseSandbox):
         extra_writable_volumes: dict[str, str] | None = None,
         log_path: str | Path | None = None,
         extra_init_commands: list[str] | None = None,
-        setup_fns: list[Callable[[BaseSandbox], None]] | None = None,
+        lifecycle_hooks: list[SandboxLifecycleHooks] | None = None,
         app_name: str = "vibesys",
         enable_fallback_restart: bool = True,  # noqa: FBT001, FBT002  # tracked: #288
         max_restart_attempts: int = 2,
@@ -236,6 +239,9 @@ class ModalSandbox(BaseSandbox):
             extra_init_commands: Additional bash one-liners run inside the
                 sandbox after the default ``pip install uv``.  Failures
                 raise ``RuntimeError``.
+            lifecycle_hooks: Trusted extensions invoked in order after
+                built-in initialization and before the sandbox becomes ready.
+                They run again after every container recreation.
             app_name: Modal App name to attach the sandbox to.  Created if
                 missing.
         """
@@ -253,7 +259,7 @@ class ModalSandbox(BaseSandbox):
         self._extra_readonly_volumes = dict(extra_readonly_volumes or {})
         self._extra_writable_volumes = dict(extra_writable_volumes or {})
         self._extra_init_commands = list(extra_init_commands or [])
-        self._setup_fns = list(setup_fns or [])
+        self._lifecycle = SandboxLifecycle(lifecycle_hooks)
         self._app_name = app_name
         self._enable_fallback_restart = enable_fallback_restart
         self._max_restart_attempts = max_restart_attempts
@@ -327,8 +333,13 @@ class ModalSandbox(BaseSandbox):
         )
         self._log(f"created workspace volume {self._workspace_volume_name}")
 
-        self._populate_workspace_volume()
-        self._create_container()
+        try:
+            self._populate_workspace_volume()
+            self._create_container()
+        except BaseException:
+            self._discard_started_sandbox()
+            self._delete_workspace_volume()
+            raise
 
     def _create_container(self) -> None:  # noqa: C901  # tracked: #288
         """Create (or recreate) the Modal sandbox container on top of the
@@ -345,8 +356,11 @@ class ModalSandbox(BaseSandbox):
         ).run_commands(f"rm -rf {self._CONTAINER_ROOT} && mkdir {self._CONTAINER_ROOT}")
 
         # _workspace_volume is created by start() before _create_container().
+        workspace_volume = self._workspace_volume
+        if workspace_volume is None:
+            raise RuntimeError("Workspace volume not created; call start() first")  # noqa: TRY003  # tracked: #288
         volumes: dict[str | os.PathLike[str], modal.Volume | modal.CloudBucketMount] = {
-            self._CONTAINER_ROOT: self._workspace_volume  # pyright: ignore[reportAssignmentType]
+            self._CONTAINER_ROOT: workspace_volume
         }
         if self._model_volume_name:
             model_vol = modal.Volume.from_name(self._model_volume_name).read_only()
@@ -428,10 +442,7 @@ class ModalSandbox(BaseSandbox):
                     self._log(f"init command stdout: {out.strip()[:500]}")
             self._log(f"init command completed: {cmd}")
 
-        # Run caller-supplied setup functions.  These re-execute on every
-        # restart so transient in-container state (symlinks etc.) survives.
-        for fn in self._setup_fns:
-            fn(self)
+        self._lifecycle.before_ready(self)
 
     def _restart_sandbox(self) -> bool:
         """Terminate the (likely dead) sandbox container and recreate it.
@@ -472,6 +483,7 @@ class ModalSandbox(BaseSandbox):
             self._log(f"[fallback] restart succeeded (new id={self._sandbox_id})")
             return True  # noqa: TRY300  # tracked: #288
         except Exception as exc:  # noqa: BLE001  # tracked: #288
+            self._discard_started_sandbox()
             self._log(f"[fallback] restart failed: {exc}")
             return False
 
@@ -582,6 +594,16 @@ class ModalSandbox(BaseSandbox):
     def id(self) -> str:  # noqa: D102  # tracked: #288
         return self._sandbox_id or "modal-not-started"
 
+    def _require_sandbox(self) -> modal.Sandbox:
+        """Return the live container, raising if ``start()`` has not run.
+
+        Call sites inside retry closures re-read the attribute on every
+        attempt because ``_restart_sandbox`` swaps it for a fresh container.
+        """
+        if self._sandbox is None:
+            raise RuntimeError("Sandbox not started — call start() first")  # noqa: TRY003  # tracked: #288
+        return self._sandbox
+
     # -- shared fallback wrapper ------------------------------------------
 
     def _run_with_fallback(self, fn: Callable[[], T], *, label: str) -> T:
@@ -624,7 +646,7 @@ class ModalSandbox(BaseSandbox):
         # The closures passed to _run_with_fallback re-read self._sandbox on
         # every call (a restart swaps it); None is ruled out at method entry.
         def _do_exec() -> tuple[str, str, int]:
-            proc = self._sandbox.exec(  # pyright: ignore[reportOptionalMemberAccess]
+            proc = self._require_sandbox().exec(
                 "bash",
                 "-c",
                 command,
@@ -683,12 +705,13 @@ class ModalSandbox(BaseSandbox):
         # Closure re-reads self._sandbox on every call (a restart swaps it);
         # None is ruled out at method entry.
         def _do_write() -> None:
-            fs = self._sandbox.filesystem  # pyright: ignore[reportOptionalMemberAccess]
+            sandbox = self._require_sandbox()
+            fs = sandbox.filesystem
             try:
-                fs.make_directory(parent, parents=True)  # pyright: ignore[reportCallIssue]
+                fs.make_directory(parent, create_parents=True)
             except TypeError:
-                # Older Modal SDKs: make_directory may not accept parents=
-                self._sandbox.exec(  # pyright: ignore[reportOptionalMemberAccess]
+                # Older Modal SDKs: make_directory may not accept create_parents=
+                sandbox.exec(
                     "bash",
                     "-c",
                     f"mkdir -p {parent}",
@@ -721,8 +744,9 @@ class ModalSandbox(BaseSandbox):
             ) -> None:
                 # Re-read fs on each call so post-restart we get the new
                 # sandbox's filesystem handle, not a stale reference.
-                fs = self._sandbox.filesystem  # pyright: ignore[reportOptionalMemberAccess]
-                self._sandbox.exec(  # pyright: ignore[reportOptionalMemberAccess]
+                sandbox = self._require_sandbox()
+                fs = sandbox.filesystem
+                sandbox.exec(
                     "bash",
                     "-c",
                     f"mkdir -p {_parent}",
@@ -750,7 +774,7 @@ class ModalSandbox(BaseSandbox):
             try:
                 content = self._run_with_fallback(
                     # Re-reads self._sandbox so a restart is picked up.
-                    lambda p=container_path: self._sandbox.filesystem.read_bytes(p),  # pyright: ignore[reportOptionalMemberAccess]
+                    lambda p=container_path: self._require_sandbox().filesystem.read_bytes(p),
                     label=f"download {path}",
                 )
                 results.append(FileDownloadResponse(path=path, content=content))
@@ -769,28 +793,33 @@ class ModalSandbox(BaseSandbox):
 
     def stop(self) -> None:
         """Terminate the sandbox and sync the workspace back to the host."""
-        if self._sandbox is None:
-            return
+        if self._sandbox is not None:
+            # Download BEFORE clearing self._sandbox — _download_workspace
+            # early-returns when self._sandbox is None.
+            try:
+                self._download_workspace()
+            except Exception as exc:  # noqa: BLE001  # tracked: #288
+                self._log(f"workspace download failed: {exc}")
+            self._discard_started_sandbox()
+        self._delete_workspace_volume()
 
-        # Download BEFORE clearing self._sandbox — _download_workspace
-        # early-returns when self._sandbox is None.
-        try:
-            self._download_workspace()
-        except Exception as exc:  # noqa: BLE001  # tracked: #288
-            self._log(f"workspace download failed: {exc}")
-
+    def _discard_started_sandbox(self) -> None:
+        """Best-effort rollback for a container that did not become ready."""
         sandbox = self._sandbox
         sandbox_id = self._sandbox_id
         self._sandbox = None
         self._sandbox_id = None
         if sandbox_id is not None:
             _live_sandboxes.pop(sandbox_id, None)
-
+        if sandbox is None:
+            return
         try:
             sandbox.terminate()
         except Exception as exc:  # noqa: BLE001  # tracked: #288
             self._log(f"terminate failed: {exc}")
 
+    def _delete_workspace_volume(self) -> None:
+        """Best-effort deletion of the workspace volume owned by this sandbox."""
         if self._workspace_volume_name:
             try:
                 modal.Volume.objects.delete(
@@ -860,7 +889,7 @@ class ModalSandbox(BaseSandbox):
 
             data = _retry_transient(
                 # Re-reads self._sandbox so a restart is picked up.
-                lambda: self._sandbox.filesystem.read_bytes(tar_remote),  # pyright: ignore[reportOptionalMemberAccess]
+                lambda: self._require_sandbox().filesystem.read_bytes(tar_remote),
                 log=self._log,
                 label="workspace tar download",
             )
