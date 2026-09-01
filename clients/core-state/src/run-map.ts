@@ -160,7 +160,6 @@ export function roundAgentElapsedMs(round: RoundSummary, now: Date): number {
   return activeTimingElapsedMs(round, now);
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 function applyPhaseEvent(state: RunMapState, event: RunEvent): AgentPhase[] {
   const kind = event.agent_kind;
   if (!kind) return state.phases;
@@ -203,7 +202,6 @@ function terminalPhaseStatus(status: RunEvent['status']): AgentPhaseStatus {
   return 'completed';
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 function applyRoundEvent(
   rounds: RoundSummary[],
   phases: AgentPhase[],
@@ -327,7 +325,6 @@ function earliestTimestamp(
   return new Date(right).getTime() < new Date(left).getTime() ? right : left;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 function updateRoundAgentElapsed(
   round: RoundSummary,
   phases: AgentPhase[],

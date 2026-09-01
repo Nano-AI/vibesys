@@ -181,28 +181,8 @@ allowlist = [
 # (`style/noExcessiveLinesPerFile`) at the same 1600-line ceiling.
 max_lines = 1600
 
-# Directories scanned for `*.py`. Any path with a `tests` or `__pycache__`
-# component is skipped: long test modules are normal, and `biome.json`
-# exempts `*.test.ts` from its file-length rule for the same reason.
+# Directories scanned for `*.py`. Generated `__pycache__` paths are skipped.
 roots = ["src", "libs", "scripts", "sdk"]
-
-# Files already over the ceiling, recorded at their length on 2026-09-01. This
-# is a shrink-only ratchet: exceeding a recorded count fails, and an entry that
-# drops back to 1600 or below is reported as stale and must be deleted. Splitting
-# any of these is a separate refactor, not a prerequisite for turning the check
-# on.
-[tool.vibesys.file_length.allowlist]
-# The agent loop: round orchestration, agent invocation, and result handling in
-# one module. The largest single refactor target in the repo.
-"src/vibesys/loops/agent/loop.py" = 3609
-# CLI entry point; every subcommand's argument wiring lives here.
-"src/entrypoints/headless.py" = 2600
-# Generated-state accessors for the whole `.vibesys` layout.
-"libs/vs-project/src/vs_project/_state.py" = 2125
-# Prompt/context assembly for every loop.
-"src/vibesys/context.py" = 1652
-# Sandbox run environment: setup, execution, and teardown across strategies.
-"src/vibesys/sandbox/run_environment.py" = 1975
 
 [tool.ruff]
 line-length = 100

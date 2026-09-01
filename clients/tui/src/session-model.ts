@@ -1,4 +1,3 @@
-// biome-ignore lint/style/noExcessiveLinesPerFile: pre-existing; tracked: #288
 import type {
   ChatOptions,
   Diagnostic,
@@ -631,7 +630,6 @@ export function openExperimentLog(state: SessionState): SessionState {
   };
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 export function setExperiments(state: SessionState, entries: HypothesisEntry[]): SessionState {
   const log = state.experimentLog;
   if (log === null) return state;
@@ -793,7 +791,6 @@ export function selectExperimentActivity(state: SessionState): SessionState {
  * Advances the experiment navigation by one level: index to hypothesis
  * summary, then hypothesis summary to its selected round trajectory.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 export function enterExperimentDrilldown(state: SessionState): SessionState {
   if (state.hypothesisDetail !== null) {
     const roundNumber = state.hypothesisDetail.selectedRound;
@@ -1606,7 +1603,6 @@ export function dismissErrorBanner(state: SessionState): SessionState {
  * commonly repeats an invocation failure, so equivalent reports promote the
  * current banner instead of burying its cause beneath a duplicate.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 export function reportError(
   state: SessionState,
   message: string,

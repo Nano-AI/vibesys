@@ -1,4 +1,4 @@
-"""Behavioral tests for the Python file-length ratchet.
+"""Behavioral tests for the Python file-length ceiling.
 
 Every case drives `scripts/check_file_length.py` through its CLI against a
 throwaway fixture tree, so the assertions cover the contract CI depends on
@@ -22,15 +22,11 @@ def write_module(root: Path, relative: str, lines: int) -> None:
     path.write_text("\n".join(f"x = {index}" for index in range(lines)) + "\n", encoding="utf-8")
 
 
-def write_config(root: Path, max_lines: int, allowlist: dict[str, int]) -> None:
+def write_config(root: Path, max_lines: int, *, allowlist: bool = False) -> None:
     """Write a fixture `pyproject.toml` carrying a `[tool.vibesys.file_length]` section."""
-    entries = "\n".join(f'"{path}" = {count}' for path, count in allowlist.items())
+    bypass = '\n[tool.vibesys.file_length.allowlist]\n"src/legacy.py" = 150\n' if allowlist else ""
     (root / "pyproject.toml").write_text(
-        "[tool.vibesys.file_length]\n"
-        f"max_lines = {max_lines}\n"
-        'roots = ["src"]\n'
-        "\n[tool.vibesys.file_length.allowlist]\n"
-        f"{entries}\n",
+        f'[tool.vibesys.file_length]\nmax_lines = {max_lines}\nroots = ["src"]\n{bypass}',
         encoding="utf-8",
     )
 
@@ -46,7 +42,7 @@ def run_check(root: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_passes_when_every_file_is_under_the_ceiling(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={})
+    write_config(tmp_path, max_lines=100)
     write_module(tmp_path, "src/small.py", 50)
 
     result = run_check(tmp_path)
@@ -56,7 +52,7 @@ def test_passes_when_every_file_is_under_the_ceiling(tmp_path: Path) -> None:
 
 
 def test_fails_when_a_new_file_exceeds_the_ceiling(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={})
+    write_config(tmp_path, max_lines=100)
     write_module(tmp_path, "src/small.py", 50)
     write_module(tmp_path, "src/huge.py", 150)
 
@@ -67,55 +63,26 @@ def test_fails_when_a_new_file_exceeds_the_ceiling(tmp_path: Path) -> None:
     assert "src/small.py" not in result.stdout
 
 
-def test_fails_when_an_allowlisted_file_grows(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={"src/legacy.py": 150})
-    write_module(tmp_path, "src/legacy.py", 151)
+def test_rejects_an_allowlist_bypass(tmp_path: Path) -> None:
+    write_config(tmp_path, max_lines=100, allowlist=True)
+    write_module(tmp_path, "src/legacy.py", 150)
 
     result = run_check(tmp_path)
 
-    assert result.returncode == 1
-    assert "src/legacy.py: 151 lines > 150 (recorded)" in result.stdout
+    assert result.returncode == 2
+    assert "does not support an allowlist" in result.stderr
 
 
-def test_passes_and_suggests_tightening_when_an_allowlisted_file_shrinks(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={"src/legacy.py": 150})
-    write_module(tmp_path, "src/legacy.py", 120)
-
-    result = run_check(tmp_path)
-
-    assert result.returncode == 0
-    assert "src/legacy.py: 150 -> 120" in result.stdout
-
-
-def test_fails_when_an_allowlisted_file_drops_under_the_ceiling(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={"src/legacy.py": 150})
-    write_module(tmp_path, "src/legacy.py", 90)
-
-    result = run_check(tmp_path)
-
-    assert result.returncode == 1
-    assert "Stale" in result.stdout
-    assert "src/legacy.py: now 90 lines" in result.stdout
-
-
-def test_fails_when_an_allowlisted_file_disappears(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={"src/gone.py": 150})
-    write_module(tmp_path, "src/kept.py", 10)
-
-    result = run_check(tmp_path)
-
-    assert result.returncode == 1
-    assert "src/gone.py: no longer exists" in result.stdout
-
-
-def test_skips_test_modules_and_caches(tmp_path: Path) -> None:
-    write_config(tmp_path, max_lines=100, allowlist={})
+def test_enforces_test_modules_but_skips_caches(tmp_path: Path) -> None:
+    write_config(tmp_path, max_lines=100)
     write_module(tmp_path, "src/pkg/tests/test_big.py", 500)
     write_module(tmp_path, "src/pkg/__pycache__/cached.py", 500)
 
     result = run_check(tmp_path)
 
-    assert result.returncode == 0
+    assert result.returncode == 1
+    assert "src/pkg/tests/test_big.py: 500 lines > 100" in result.stdout
+    assert "cached.py" not in result.stdout
 
 
 def test_reports_a_tool_error_when_the_config_section_is_missing(tmp_path: Path) -> None:

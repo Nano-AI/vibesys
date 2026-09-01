@@ -18,14 +18,7 @@ EXPECTED_RULES = {
     ("complexity", "noExcessiveCognitiveComplexity"): {"maxAllowedComplexity": 15},
     ("complexity", "noExcessiveLinesPerFunction"): {"maxLines": 80, "skipBlankLines": True},
     ("complexity", "useMaxParams"): {"max": 6},
-    ("style", "noExcessiveLinesPerFile"): {"maxLines": 800},
-}
-
-# Kept in step with the Python side: `[tool.vibesys.file_length]` in
-# pyproject.toml uses the same ceiling and the same test-file exemption.
-FILE_LENGTH_EXEMPT_RULES = {
-    "complexity": "noExcessiveLinesPerFunction",
-    "style": "noExcessiveLinesPerFile",
+    ("style", "noExcessiveLinesPerFile"): {"maxLines": 1600},
 }
 
 
@@ -42,15 +35,5 @@ def test_quality_rules_are_errors_with_the_documented_thresholds() -> None:
         assert entry["options"] == options
 
 
-def test_test_files_are_exempt_from_the_line_count_rules_only() -> None:
-    overrides = load_biome_config()["overrides"]
-    matching = [entry for entry in overrides if "**/*.test.ts" in entry["includes"]]
-    assert len(matching) == 1
-
-    exempt = matching[0]["linter"]["rules"]
-    for group, name in FILE_LENGTH_EXEMPT_RULES.items():
-        assert exempt[group][name] == "off"
-
-    # Cognitive complexity and parameter counts still apply to test files.
-    assert "noExcessiveCognitiveComplexity" not in exempt.get("complexity", {})
-    assert "useMaxParams" not in exempt.get("complexity", {})
+def test_quality_rules_have_no_overrides() -> None:
+    assert "overrides" not in load_biome_config()

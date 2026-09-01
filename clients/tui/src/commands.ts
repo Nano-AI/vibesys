@@ -147,7 +147,6 @@ export function parseChatCommand(text: string): ParsedChatCommand {
 }
 
 /** Parses the command surface. Ordinary questions belong to Experiment chat. */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 export function parseCommand(text: string): ParsedCommand {
   if (text === '/help') return {localView: 'help'};
   const chat = text.match(/^\/chat(?:\s+(.*))?$/);

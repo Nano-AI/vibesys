@@ -48,21 +48,6 @@
       }
     }
   },
-  "overrides": [
-    {
-      "includes": ["**/*.test.ts", "**/*.test.tsx"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveLinesPerFunction": "off"
-          },
-          "style": {
-            "noExcessiveLinesPerFile": "off"
-          }
-        }
-      }
-    }
-  ],
   "javascript": {
     "formatter": {
       "arrowParentheses": "asNeeded",

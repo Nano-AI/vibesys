@@ -7,30 +7,16 @@ equivalents plus a per-file line ceiling. Neither tool measures Python *file*
 length, so a module can grow without bound while every function in it stays
 inside the limits. This script closes that gap.
 
-The ceiling is a ratchet, not a hard cut: files already over it are recorded in
-an explicit allowlist at their current length, so the check passes today and
-fails the moment one of them grows. Shrinking a file is always allowed; the
-script prints the entries worth tightening and refuses to let an entry that has
-dropped back under the ceiling linger.
+The ceiling is a hard limit. Every scanned file must stay within it;
+the checker has no allowlist or per-file bypass.
 
 Configuration lives in `pyproject.toml` under `[tool.vibesys.file_length]`:
 
-    max_lines  -- ceiling, in physical lines (what `wc -l` counts), for any
-                  file that is not allowlisted.
-    roots      -- repo-relative directories to scan for `*.py`. Any path with
-                  a `tests` or `__pycache__` component is skipped: long test
-                  modules are normal, and the same exemption applies to
-                  TypeScript test files in `biome.json`.
-    allowlist  -- table of repo-relative path -> recorded line count for files
-                  currently over the ceiling. Every entry should be preceded
-                  by a comment explaining why it is still there.
+    max_lines  -- ceiling, in physical lines (what `wc -l` counts).
+    roots      -- repo-relative directories to scan for `*.py`. Generated
+                  `__pycache__` paths are skipped.
 
-Three conditions fail:
-
-    1. A non-allowlisted file exceeds `max_lines`.
-    2. An allowlisted file exceeds its recorded count (the ratchet).
-    3. An allowlist entry is stale: the file is gone, or it now fits under
-       `max_lines` and the entry must be deleted.
+The check fails when any scanned file exceeds `max_lines`.
 
 Usage:
     uv run python scripts/check_file_length.py
@@ -46,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_PYPROJECT = Path("pyproject.toml")
-SKIPPED_DIR_NAMES = frozenset({"tests", "__pycache__"})
+SKIPPED_DIR_NAMES = frozenset({"__pycache__"})
 
 EXIT_OK = 0
 EXIT_VIOLATIONS = 1
@@ -59,7 +45,6 @@ class Config:
 
     max_lines: int
     roots: tuple[str, ...]
-    allowlist: dict[str, int]
 
 
 class ConfigError(Exception):
@@ -67,7 +52,7 @@ class ConfigError(Exception):
 
 
 def load_config(pyproject_path: Path) -> Config:
-    """Read the file-length ceiling, scan roots, and allowlist from ``pyproject.toml``.
+    """Read the file-length ceiling and scan roots from ``pyproject.toml``.
 
     Raises:
         ConfigError: If the section is absent or a required key is missing.
@@ -88,8 +73,10 @@ def load_config(pyproject_path: Path) -> Config:
             f"{pyproject_path}: missing [tool.vibesys.file_length] key {exc}"
         ) from exc
 
-    allowlist = {str(path): int(count) for path, count in section.get("allowlist", {}).items()}
-    return Config(max_lines=max_lines, roots=roots, allowlist=allowlist)
+    if "allowlist" in section:
+        message = f"{pyproject_path}: [tool.vibesys.file_length] does not support an allowlist"
+        raise ConfigError(message)
+    return Config(max_lines=max_lines, roots=roots)
 
 
 def count_lines(path: Path) -> int:
@@ -110,67 +97,30 @@ def measure(repo_root: Path, roots: tuple[str, ...]) -> dict[str, int]:
 
 
 def check_measured_files(measured: dict[str, int], config: Config) -> list[str]:
-    """Report files over the ceiling that are not allowlisted, or over their recorded count."""
+    """Report files over the ceiling."""
     failures: list[str] = []
     for path, lines in sorted(measured.items()):
-        recorded = config.allowlist.get(path)
-        if recorded is None:
-            if lines > config.max_lines:
-                failures.append(
-                    f"  {path}: {lines} lines > {config.max_lines} (ceiling), and not allowlisted"
-                )
-        elif lines > recorded:
-            failures.append(
-                f"  {path}: {lines} lines > {recorded} (recorded); this file may only shrink"
-            )
+        if lines > config.max_lines:
+            failures.append(f"  {path}: {lines} lines > {config.max_lines} (ceiling)")
     return failures
 
 
-def check_allowlist(measured: dict[str, int], config: Config) -> tuple[list[str], list[str]]:
-    """Report stale allowlist entries, and entries whose recorded count can be tightened."""
-    stale: list[str] = []
-    tightenable: list[str] = []
-    for path, recorded in sorted(config.allowlist.items()):
-        lines = measured.get(path)
-        if lines is None:
-            stale.append(f"  {path}: no longer exists or is no longer scanned")
-        elif lines <= config.max_lines:
-            stale.append(f"  {path}: now {lines} lines, at or under the {config.max_lines} ceiling")
-        elif lines < recorded:
-            tightenable.append(f"  {path}: {recorded} -> {lines}")
-    return stale, tightenable
-
-
-def report(failures: list[str], stale: list[str], tightenable: list[str], ceiling: int) -> int:
+def report(failures: list[str], ceiling: int) -> int:
     """Print the outcome and return the process exit code."""
     if failures:
-        print(f"Python files over the {ceiling}-line ceiling or over their recorded length:")
+        print(f"Python files over the {ceiling}-line ceiling:")
         for line in failures:
             print(line)
-        print(
-            "\nSplit the module, or (for a deliberate, reviewed exception) record it in "
-            "[tool.vibesys.file_length.allowlist] in pyproject.toml with a comment."
-        )
-    if stale:
-        if failures:
-            print()
-        print("Stale [tool.vibesys.file_length.allowlist] entries; delete them:")
-        for line in stale:
-            print(line)
-    if failures or stale:
+        print("\nSplit each module until it is within the limit; bypasses are not supported.")
         return EXIT_VIOLATIONS
 
-    print(f"All scanned Python files are within the {ceiling}-line ceiling or their recorded size.")
-    if tightenable:
-        print("\nAllowlist entries that shrank; lower the recorded count to lock the gain in:")
-        for line in tightenable:
-            print(line)
+    print(f"All scanned Python files are within the {ceiling}-line ceiling.")
     return EXIT_OK
 
 
 def main() -> int:
-    """Enforce the Python file-length ratchet, returning a process exit code."""
-    parser = argparse.ArgumentParser(description="Enforce the Python file-length ratchet.")
+    """Enforce the Python file-length ceiling, returning a process exit code."""
+    parser = argparse.ArgumentParser(description="Enforce the Python file-length ceiling.")
     parser.add_argument(
         "--root", type=Path, default=Path(), help="Repository root to scan (default: cwd)"
     )
@@ -191,8 +141,7 @@ def main() -> int:
         return EXIT_TOOL_ERROR
 
     failures = check_measured_files(measured, config)
-    stale, tightenable = check_allowlist(measured, config)
-    return report(failures, stale, tightenable, config.max_lines)
+    return report(failures, config.max_lines)
 
 
 if __name__ == "__main__":

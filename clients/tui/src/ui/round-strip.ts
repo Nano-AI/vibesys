@@ -26,7 +26,6 @@ interface StripWindow {
  * is what makes holding `[` feel like the run scrolling past rather than
  * jumping a page at a time.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing; tracked: #288
 export function stripWindow(
   rounds: RoundSummary[],
   selected: number | null,
