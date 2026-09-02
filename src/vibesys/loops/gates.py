@@ -26,6 +26,23 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 
+def framework_command_timeout(ctx: LoopContext, timeout_seconds: int | None) -> int | None:
+    """Add environment-owned setup time without weakening the command's own budget.
+
+    Environment-owned Modal/SkyPilot deployment and readiness happens before the
+    trusted command runs, so charging that setup to the command's declared budget
+    can time it out before it receives its configured execution window. Extend the
+    budget by the run environment's ``framework_setup_timeout_seconds`` allowance.
+    """
+    if timeout_seconds is None:
+        return None
+    view = getattr(ctx, "run_environment_view", None)
+    setup_timeout = getattr(view, "framework_setup_timeout_seconds", 0)
+    if not isinstance(setup_timeout, int):
+        setup_timeout = 0
+    return timeout_seconds + setup_timeout
+
+
 @dataclass(frozen=True)
 class AccuracyGateResult:
     """Outcome of running the immutable accuracy command for a candidate."""
