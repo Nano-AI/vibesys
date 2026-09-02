@@ -402,6 +402,10 @@ export function createOpenTuiApp(
         ? renderer.terminalWidth
         : chatPaneWidth(renderer.terminalWidth, rightWidth)
       : 0;
+    // The docked chat spends its last row on the pane's bottom border, so the
+    // command column beside it gives up the same row. Without that the Command
+    // box would sit one row below the Message box it lines up with.
+    const commandInset = showChatPane ? 1 : 0;
     const showExperimentLog = showLog && (zoomedPane === null || zoomedPane === 'experiments');
     paintHeader(renderHeader(state, showLog, renderer.terminalWidth - HEADER_CHROME));
     errorBanner.render(state);
@@ -454,7 +458,8 @@ export function createOpenTuiApp(
     if (showSplit) {
       const errorHeight = state.errorBanner === null ? 0 : errorBanner.output.height;
       const top = headerFrame.height + errorHeight + (showLog ? 0 : roundStrip.output.height);
-      const below = todoStrip.output.height + help.height + commandInput.box.height;
+      const below =
+        todoStrip.output.height + help.height + commandInput.box.height + commandInset;
       chat.setPaneBounds({
         left: 1,
         width: leftWidth - 2,
@@ -467,6 +472,7 @@ export function createOpenTuiApp(
     chatPane.render(state, showChatPane, chatWidth);
     const chatInputFocused = showChatPane && state.layout.focus === 'chat';
     commandColumn.visible = zoomedPane !== 'chat';
+    bottom.paddingBottom = commandInset;
     // The command list completes the box it belongs to, and on this view that
     // box cannot open a chat that is already beside it.
     commandInput.setCommandContext({chatDocked: showChatPane});
