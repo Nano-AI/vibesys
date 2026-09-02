@@ -228,6 +228,18 @@ def _metric_value(record: RoundRecord, metric_name: str | None) -> float | None:
     return None
 
 
+def _is_trusted_provenance(perf_provenance: str | None) -> bool:
+    """Whether a headline metric is framework-owned rather than self-reported.
+
+    Legacy records carry no provenance and stay trusted; only an explicit
+    ``"implementer"`` stamp is untrusted. This is the single trust rule shared
+    by hypothesis resolution, scalar/Pareto retention, delta computation, and
+    trusted Pareto-parent selection: an implementer self-report must never
+    drive dominance decisions or seed the archive.
+    """
+    return perf_provenance != "implementer"
+
+
 # ---------------------------------------------------------------------------
 # Provisional Pareto checkpoint memory
 # ---------------------------------------------------------------------------
@@ -331,6 +343,11 @@ def _trusted_candidate_records(
         if not objective_names.issubset(metrics):
             continue
         if not record.commit or not record.passed or not record.reviewed:
+            continue
+        if not _is_trusted_provenance(record.perf_provenance):
+            # An implementer self-reported headline metric may keep its commit
+            # as a provisional claim, but it must never seed the archive as a
+            # trusted Pareto parent or dominate later candidates.
             continue
         if _record_candidate_retained(record) is not True:
             continue
@@ -3166,6 +3183,12 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                 baseline_metric = (
                     _metric_value(parent_record, metric_name) if parent_record is not None else None
                 )
+                # A headline metric is framework-owned unless the implementer
+                # self-reported it. The same trust rule gates hypothesis
+                # resolution, scalar/Pareto retention, delta computation, and
+                # trusted Pareto-parent selection so untrusted numbers never
+                # drive dominance decisions.
+                framework_provenance = _is_trusted_provenance(perf_provenance)
                 hypothesis_resolution = resolve_hypothesis_outcome(
                     ResolutionEvidence(
                         declared=declared_outcome,
@@ -3176,7 +3199,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                         # implementer-reported one resolves as unmeasured.
                         official_metric=(
                             official_metric
-                            if official_evaluation and perf_provenance != "implementer"
+                            if official_evaluation and framework_provenance
                             else None
                         ),
                         baseline_metric=baseline_metric,
@@ -3189,19 +3212,21 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                     candidate_retained = _provisional_candidate_retained(disposition)
                 elif not passed:
                     candidate_retained = False
-                elif official_evaluation and objectives and accepted_metrics:
+                elif (
+                    official_evaluation and framework_provenance and objectives and accepted_metrics
+                ):
                     candidate_retained = not _pareto_archive_dominators(
                         accepted_metrics,
                         records,
                         objectives,
                         relative_noise=pareto_relative_noise,
                     )
-                elif official_evaluation:
+                elif official_evaluation and framework_provenance:
                     prior_values = [
                         value
                         for record in records
                         if record.official_evaluation
-                        and record.perf_provenance != "implementer"
+                        and _is_trusted_provenance(record.perf_provenance)
                         and (value := _metric_value(record, metric_name)) is not None
                     ]
                     candidate_retained = scalar_candidate_retained(
@@ -3211,10 +3236,14 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
                         noise_fraction=pareto_relative_noise,
                     )
                 else:
+                    # No trusted framework measurement (or an implementer
+                    # self-report): retain provisionally on the implementer's
+                    # disposition, never on the untrusted metric.
                     candidate_retained = _provisional_candidate_retained(disposition)
                 perf_delta_pct = None
                 if (
-                    official_metric is not None
+                    framework_provenance
+                    and official_metric is not None
                     and baseline_metric is not None
                     and baseline_metric != 0
                 ):
