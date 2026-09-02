@@ -75,6 +75,7 @@ class AgentRunStateStore:
         rounds: Sequence[RoundRecord],
         local_namespace: StateNamespace,
         legacy_directions: Mapping[str, Literal["max", "min"]] | None = None,
+        noise_fraction: float = 0.0,
     ) -> AgentRunState:
         """Build unified state from legacy files without modifying either format."""
         existing = self.load_optional()
@@ -82,6 +83,7 @@ class AgentRunStateStore:
             return reproject_run_evidence(
                 existing,
                 legacy_directions=legacy_directions,
+                noise_fraction=noise_fraction,
             )
         ledger = self._namespace.load_optional(
             self._LEGACY_LEDGER_FILE,
@@ -193,6 +195,7 @@ def _migrate_legacy_state(
     ledger: _LegacyHypothesisLedger | None,
     active: _LegacyActiveHypothesis | None,
     legacy_directions: Mapping[str, Literal["max", "min"]] | None,
+    noise_fraction: float = 0.0,
 ) -> AgentRunState:
     ordered_rounds = sorted(rounds, key=lambda record: record.round_number)
     records_by_id = {
@@ -234,6 +237,7 @@ def _migrate_legacy_state(
             normalized_record,
             prior_rounds=prior_rounds,
             legacy_directions=legacy_directions,
+            noise_fraction=noise_fraction,
         )
         index = next(
             index for index, item in enumerate(state.hypotheses) if item.hypothesis_id == identifier

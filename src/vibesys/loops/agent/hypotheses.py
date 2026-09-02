@@ -271,6 +271,7 @@ def project_round_evidence(
     *,
     prior_rounds: Sequence[RoundRecord],
     legacy_directions: Mapping[str, Literal["max", "min"]] | None = None,
+    noise_fraction: float = 0.0,
 ) -> Hypothesis:
     """Return a hypothesis updated with one completed round's evidence."""
     if record.hypothesis_id != hypothesis.hypothesis_id:
@@ -295,6 +296,7 @@ def project_round_evidence(
                     measurement.direction if measurement is not None else record.perf_direction
                 ),
                 benchmark_expected=record.official_evaluation,
+                noise_fraction=noise_fraction,
             )
         )
     else:
@@ -317,6 +319,7 @@ def reproject_run_evidence(
     state: AgentRunState,
     *,
     legacy_directions: Mapping[str, Literal["max", "min"]] | None = None,
+    noise_fraction: float = 0.0,
 ) -> AgentRunState:
     """Rebuild hypothesis summaries from their authoritative round evidence."""
     updated = state.clone()
@@ -353,6 +356,7 @@ def reproject_run_evidence(
             record,
             prior_rounds=prior_rounds,
             legacy_directions=legacy_directions,
+            noise_fraction=noise_fraction,
         )
         prior_rounds.append(record)
     return _validated_state(updated)

@@ -2498,6 +2498,7 @@ def run_agent_loop(  # noqa: C901, PLR0912, PLR0913, PLR0915  # tracked: #288
         rounds=legacy_records,
         local_namespace=local_agent_state,
         legacy_directions=legacy_metric_directions,
+        noise_fraction=pareto_relative_noise,
     )
     active_hypothesis = agent_run_state.active_hypothesis
     if active_hypothesis is not None and _backfill_revert_commit(
