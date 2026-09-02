@@ -458,8 +458,7 @@ export function createOpenTuiApp(
     if (showSplit) {
       const errorHeight = state.errorBanner === null ? 0 : errorBanner.output.height;
       const top = headerFrame.height + errorHeight + (showLog ? 0 : roundStrip.output.height);
-      const below =
-        todoStrip.output.height + help.height + commandInput.box.height + commandInset;
+      const below = todoStrip.output.height + help.height + commandInput.box.height + commandInset;
       chat.setPaneBounds({
         left: 1,
         width: leftWidth - 2,
