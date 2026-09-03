@@ -64,7 +64,8 @@ import {
 } from '../session-model.js';
 import {createOpenTuiApp, type OpenTuiApp} from './app.js';
 import type {ClipboardCopyResult, SelectionClipboard} from './clipboard.js';
-import {resolveTheme, type ThemeName} from './theme.js';
+import {headerBackground} from './header.js';
+import {contrastRatio, listThemes, resolveTheme, type ThemeName} from './theme.js';
 
 const cleanup: Array<() => void> = [];
 
@@ -1797,9 +1798,12 @@ describe('OpenTUI presentation', () => {
 
     await testRenderer.waitForFrame(value => value.includes('checking behavior'));
     testRenderer.mockInput.pressKey('TAB');
+    // The header names the selection in the same words as the phase segment,
+    // never as the backend phase kind it is stored as.
     const filtered = await testRenderer.waitForFrame(value =>
-      value.includes('selected implementer'),
+      value.includes('filtered to implementing'),
     );
+    expect(filtered).not.toContain('selected implementer');
     expect(filtered).toContain('edited files');
     expect(filtered).not.toContain('checking behavior');
   });
@@ -3967,6 +3971,42 @@ describe('header hierarchy', () => {
     await testRenderer.waitForVisualIdle();
 
     expect(spanColors(testRenderer, 'failed')?.fg).toBe(theme.error);
+  });
+
+  it('reads the header against the cell it is actually drawn on, in every theme', async () => {
+    // The frame paints a surface of its own, so `theme.canvas` is not what the
+    // header's text sits on and a floor measured against it checks a
+    // background nothing draws. The background here is read back off the
+    // rendered cell rather than named, which is also what pins `app.ts` and
+    // `headerSpanStyle` to one answer about where the header sits.
+    const themes = listThemes();
+    expect(themes).toHaveLength(8);
+    for (const theme of themes) {
+      const testRenderer = await createTestRenderer({width: 90, height: 20});
+      const controller = new FakeController({
+        ...initialSessionState(theme.name),
+        core: {...initialSessionState(theme.name).core, status: 'completed'},
+      });
+      const app = createOpenTuiApp(testRenderer.renderer, controller);
+      registerCleanup(testRenderer.renderer, app);
+      await testRenderer.waitForFrame(value => value.includes('VibeSys'));
+
+      const floor = theme.name.startsWith('high-contrast') ? 7 : 4.5;
+      for (const word of ['VibeSys', 'completed']) {
+        const drawn = spanColors(testRenderer, word);
+        expect({theme: theme.name, word, bg: drawn?.bg}).toEqual({
+          theme: theme.name,
+          word,
+          bg: headerBackground(theme),
+        });
+        const ratio = drawn === undefined ? 0 : contrastRatio(drawn.fg, drawn.bg);
+        expect({theme: theme.name, word, readable: ratio >= floor}).toEqual({
+          theme: theme.name,
+          word,
+          readable: true,
+        });
+      }
+    }
   });
 
   it('keeps the header whole in a terminal too narrow for all of it', async () => {
