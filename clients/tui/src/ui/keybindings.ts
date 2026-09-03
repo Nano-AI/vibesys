@@ -1,6 +1,11 @@
 import type {CliRenderer, KeyEvent, ScrollBoxRenderable} from '@opentui/core';
 import type {SessionController} from '../session-controller.js';
-import {chatPaneFocused, chatPaneVisible, experimentLogVisible} from '../session-model.js';
+import {
+  chatPaneFocused,
+  chatPaneVisible,
+  experimentLogVisible,
+  todoListFocused,
+} from '../session-model.js';
 import type {ClipboardCopyResult, SelectionClipboard} from './clipboard.js';
 
 export interface KeybindingActions {
@@ -230,7 +235,9 @@ export function bindKeybindings(
       key.preventDefault();
       return;
     }
-    if (controller.state.todosExpanded) {
+    // The same predicate the todo list's chrome is drawn from, so the marker
+    // and the keys can never disagree about where Up and Down land.
+    if (todoListFocused(controller.state)) {
       if (key.name === 'up' || key.name === 'down') {
         controller.selectNextTodo(key.name === 'down' ? 1 : -1);
         key.preventDefault();

@@ -71,7 +71,6 @@ export class ChatComposerView {
   readonly #hint: TextRenderable;
   readonly #menuList: TextRenderable;
   #availableWidth = 1;
-  #focused = false;
   /** Whether the agent still owes an answer, which the title says. */
   #pending = false;
   #theme: Theme;
@@ -233,7 +232,7 @@ export class ChatComposerView {
       this.#syncSuggestions();
     }
     this.#pending = pending;
-    this.setFocused(focused);
+    this.#applyChrome();
     this.#hint.content = pending
       ? 'Awaiting the agent · Enter: queue follow-up'
       : focused
@@ -250,19 +249,23 @@ export class ChatComposerView {
     this.#editor.focus();
   }
 
-  setFocused(focused: boolean): void {
-    this.#focused = focused;
-    this.#applyFocus();
-  }
-
-  #applyFocus(): void {
+  /**
+   * The composer's frame, always the resting one.
+   *
+   * The focus treatment names the pane the keys are on, and this box is inside
+   * that pane rather than being one. Wearing it here drew the marker and the
+   * focused border twice, one nested in the other, which is the ambiguity the
+   * treatment exists to remove. Which composer has the cursor is carried by the
+   * cursor itself and by the hint line under the box, both non-colour channels.
+   */
+  #applyChrome(): void {
     const label = this.#pending ? PENDING_COMPOSER_TITLE : COMPOSER_TITLE;
-    applyPaneFocus(this.#box, this.#theme, label, this.#focused);
+    applyPaneFocus(this.#box, this.#theme, label, false);
   }
 
   applyTheme(theme: Theme): void {
     this.#theme = theme;
-    this.#applyFocus();
+    this.#applyChrome();
     this.#editor.textColor = theme.textStrong;
     this.#editor.focusedTextColor = theme.textStrong;
     this.#hint.fg = theme.textSubtle;
