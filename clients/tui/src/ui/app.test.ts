@@ -8,6 +8,7 @@ import {
 } from '@opentui/core';
 import {createTestRenderer, type TestRendererSetup} from '@opentui/core/testing';
 import type {ChatOptions, HypothesisEntry} from '@vibesys/backend-client';
+import type {CoreRunStatus} from '@vibesys/core-state';
 import {parseChatCommand} from '../commands.js';
 import type {SessionController} from '../session-controller.js';
 import {
@@ -3923,7 +3924,7 @@ describe('theming', () => {
 });
 
 describe('header hierarchy', () => {
-  const runState = (status: string): SessionState => ({
+  const runState = (status: CoreRunStatus): SessionState => ({
     ...initialSessionState(),
     core: {
       ...initialSessionState().core,
@@ -3961,7 +3962,7 @@ describe('header hierarchy', () => {
 
     controller.publish({
       ...controller.state,
-      core: {...controller.state.core, status: 'failed', terminal: true},
+      core: {...controller.state.core, status: 'failed'},
     });
     await testRenderer.waitForVisualIdle();
 
