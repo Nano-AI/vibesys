@@ -35,7 +35,7 @@ import {agentRuntimeLabel} from './agent-runtime-label.js';
 import {fillLayer} from './box-fill.js';
 import {applyPaneFocus, paneBorderColor, paneBorderStyle, paneTitle} from './focus.js';
 import {elapsedLabel} from './previews.js';
-import type {Theme} from './theme.js';
+import {mix, type Theme} from './theme.js';
 
 const STATUS_MARKER: Record<AgentPhase['status'], string> = {
   pending: '○',
@@ -96,6 +96,24 @@ function edgeColor(theme: Theme, tone: EdgeTone): string {
   return theme.borderStrong;
 }
 
+/** How far the live edge colour is pulled toward `textStrong` for the flow
+ * band's two brightness steps. Toward `textStrong` rather than toward white:
+ * white would lower contrast against a light theme's canvas, `textStrong` is
+ * whichever extreme actually widens it there, in every theme. */
+const BAND_BRIGHTER_LIFT = 0.35;
+const BAND_BRIGHTEST_LIFT = 0.7;
+
+/** The flow band's three colours: the edge's own live tone, unlifted, and two
+ * lifts of it for the head cell and the cell behind it. */
+function edgeFlowColors(theme: Theme): {live: string; brighter: string; brightest: string} {
+  const live = edgeColor(theme, 'live');
+  return {
+    live,
+    brighter: mix(live, theme.textStrong, BAND_BRIGHTER_LIFT),
+    brightest: mix(live, theme.textStrong, BAND_BRIGHTEST_LIFT),
+  };
+}
+
 /**
  * A node's label at its widest, selected: caret, status marker, and kind. The
  * graph is sized for it, so no name is ever cut and picking a node never moves
@@ -149,9 +167,9 @@ export class AgentMapView {
     text: TextRenderable;
     inner: number | null;
   }> = [];
-  /** How far the travelling dot has advanced; ticks alongside the spinner frame. */
+  /** How far the travelling band has advanced; ticks alongside the spinner frame. */
   #flowTick = 0;
-  /** Every inbound-edge run animating a dot, refreshed in place on the same tick. */
+  /** Every inbound-edge run animating a band, refreshed in place on the same tick. */
   #flowEdges: Array<{text: TextRenderable; glyphs: string}> = [];
 
   constructor(
@@ -355,11 +373,18 @@ export class AgentMapView {
     area.add(canvas);
     const runs = edgeRuns(graph);
     const flowing = flowRuns(graph.nodes, runs);
+    const flowColors = edgeFlowColors(this.#theme);
     for (const run of runs) {
       const isFlow = flowing.has(run);
       const text = new TextRenderable(this.renderer, {
         content: isFlow
-          ? paintEdgeFlow(run.glyphs, this.#flowTick, this.#theme.borderStrong, this.#theme.accent)
+          ? paintEdgeFlow(
+              run.glyphs,
+              this.#flowTick,
+              flowColors.live,
+              flowColors.brighter,
+              flowColors.brightest,
+            )
           : run.glyphs,
         ...(isFlow ? {} : {fg: edgeColor(this.#theme, run.tone)}),
         position: 'absolute',
@@ -551,12 +576,14 @@ export class AgentMapView {
       // Same tick as the node spinner above, per the design: one interval
       // drives both, never a second timer.
       this.#flowTick += 1;
+      const flowColors = edgeFlowColors(this.#theme);
       for (const edge of this.#flowEdges) {
         edge.text.content = paintEdgeFlow(
           edge.glyphs,
           this.#flowTick,
-          this.#theme.borderStrong,
-          this.#theme.accent,
+          flowColors.live,
+          flowColors.brighter,
+          flowColors.brightest,
         );
       }
     }, SPINNER_INTERVAL_MS);
@@ -614,11 +641,15 @@ function cellKey(x: number, y: number): string {
 
 /**
  * Edge runs that carry data into an active node from a completed source in
- * the column before it: the only edges the approved design animates. An
- * active node's own outbound edges are excluded even though `edgeTone()`
- * (agent-graph.ts) also tags them 'live' on this base — that direction bug is
- * fixed separately (#714, not in this branch) — so tone alone cannot decide
- * this; node status, read straight off `graph.nodes`, does.
+ * the column before it: the only edges the approved design animates. Once
+ * `edgeTone()` (agent-graph.ts) stopped tagging an active node's own outbound
+ * edges 'live' (#728), a straight single-row edge's tone already says exactly
+ * this. Tone still is not an equivalent test for a bent edge, though:
+ * `routeEdges` paints every lane segment of a bend with the same tone, so
+ * selecting on tone would also catch those mid-path fragments — which have no
+ * arrowhead cell of their own and which this function deliberately excludes
+ * below. Node status, read straight off `graph.nodes`, is the test that
+ * agrees with that "single straight run" restriction in both directions.
  *
  * A run qualifies when its first cell is some node's departure point (`x +
  * width, y + 1`) and its last cell is an active node's arrival point (`x - 1,
@@ -648,37 +679,43 @@ export function flowRuns(nodes: GraphNode[], runs: readonly EdgeRun[]): Set<Edge
 }
 
 /**
- * A flow run's glyphs redrawn dimmed (`dimColor`), with one bright `•`
- * (`dotColor`) riding the line and advancing a cell every call. No brightness
- * gradient: a spike tried a fading comet and found that on a short edge the
- * comet is as long as the edge, so the whole line flips colour at once, which
- * reads as a blink. A single dot is a shape channel instead of a colour one,
- * so it survives a palette collapse (WCAG 1.4.1).
+ * A flow run's glyphs, unchanged, with a 2-cell brightness band riding the
+ * line: the cell at `tick`'s position is `brightestColor`, the cell behind it
+ * (toward the source) is `brighterColor`, and every other line cell —
+ * including the ones the band has already passed — is `liveColor`, the
+ * edge's ordinary live-tone colour. The band moves one cell per call; the
+ * tail does not wrap, so the cell behind the head is only ever the one cell
+ * immediately before it, never the run's far end. The head itself wraps, from
+ * the run's last line cell back to its first.
  *
  * `tick` cycles over every cell except the run's last one: `routeEdges`
- * always writes the arrowhead there, and it stays fixed and is never the dot,
- * so direction always reads from its own glyph rather than from wherever the
- * dot happens to be.
+ * always writes the arrowhead there, and it keeps its own glyph and
+ * `liveColor` always, never joining the band, so direction always reads from
+ * its own glyph rather than from wherever the band happens to be.
  *
  * Known limits, not fixed here: several inbound edges into one node tick in
- * lockstep (one shared `tick`) and would read as a single pulse rather than
+ * lockstep (one shared `tick`) and would read as a single band rather than
  * distinct flows; `routeEdges` also merges cells where edges overlap near a
- * shared target, so two dots could land on the same cell and fuse into one.
+ * shared target, so two bands could land on the same cells and fuse into one.
  * Neither shows today because execution is sequential — at most one edge feeds
  * an active node at a time.
  */
 export function paintEdgeFlow(
   glyphs: string,
   tick: number,
-  dimColor: string,
-  dotColor: string,
+  liveColor: string,
+  brighterColor: string,
+  brightestColor: string,
 ): StyledText {
   const chars = [...glyphs];
   const pathLength = chars.length - 1;
-  const dotIndex = pathLength > 0 ? tick % pathLength : -1;
-  const chunks: TextChunk[] = chars.map((glyph, index) =>
-    index === dotIndex ? fg(dotColor)('•') : fg(dimColor)(glyph),
-  );
+  const headIndex = pathLength > 0 ? tick % pathLength : -1;
+  const chunks: TextChunk[] = chars.map((glyph, index) => {
+    if (index === pathLength) return fg(liveColor)(glyph);
+    if (index === headIndex) return fg(brightestColor)(glyph);
+    if (index === headIndex - 1) return fg(brighterColor)(glyph);
+    return fg(liveColor)(glyph);
+  });
   return new StyledText(chunks);
 }
 
