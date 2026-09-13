@@ -11,7 +11,7 @@ import {createTestRenderer, type TestRendererSetup} from '@opentui/core/testing'
 import type {SessionController} from '../session-controller.js';
 import {type ConversationEntry, initialSessionState} from '../session-model.js';
 import {ConversationView, styleTranscriptText} from './conversation.js';
-import {createMarkdownStyle} from './styles.js';
+import {codeSurface, createMarkdownStyle} from './styles.js';
 import {
   CONVERSATION_ROLES,
   contrastRatio,
@@ -712,6 +712,30 @@ describe('a split gate command entry (the legacy framework-validation adapter)',
         ? text.content
         : text.content.chunks.map(chunk => chunk.text).join('');
     expect(prose).toBe('[framework-validation] running build-and-correctness-gate: ');
+  });
+
+  it('tags the command as bash and still renders flat (no bundled grammar yet)', async () => {
+    const entries: ConversationEntry[] = [
+      {
+        id: 'g3',
+        kind: 'diagnostic',
+        label: 'judge · round-1-retry-1-judge',
+        content: '[framework-validation] running build-and-correctness-gate: ',
+        command: GATE_COMMAND,
+      },
+    ];
+    const {view} = await renderEntries(entries);
+    const card = cardOf(view, 'g3');
+    const code = card.getChildren().find(child => child instanceof CodeRenderable);
+    if (!(code instanceof CodeRenderable)) throw new Error('command code block missing');
+    expect(code.filetype).toBe('bash');
+    // 'bash' has no bundled grammar (GRAMMAR_FILETYPES in styles.ts), so
+    // drawOnCodeSurface still takes the flat drawUnstyledText path: same
+    // colors as an untagged block, no visual change today.
+    const theme = resolveTheme(null);
+    expect({fg: rgbToHex(code.fg), bg: rgbToHex(code.bg)}).toEqual(codeSurface(theme));
+    expect(code.drawUnstyledText).toBe(true);
+    expect(code.baseHighlight).toBeUndefined();
   });
 
   it('renders an entry without a command exactly as before: no code block', async () => {

@@ -532,6 +532,10 @@ export class ConversationView {
         // anywhere rather than at one.
         const commandBlock = new CodeRenderable(this.renderer, {
           content: entry.command,
+          // No bash grammar ships today (GRAMMAR_FILETYPES in styles.ts), so
+          // this still takes the flat drawUnstyledText path below; tagging it
+          // now means it lights up automatically once a bash grammar lands.
+          filetype: 'bash',
           syntaxStyle: this.#markdownBlockOptions.syntaxStyle,
           width: '100%',
           wrapMode: 'char',
