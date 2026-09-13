@@ -674,19 +674,19 @@ describe('session controller', () => {
 
     await controller.submitCommand('/history');
     expect(controller.state.errorBanner).toBeNull();
-    expect(controller.state.inputError).toContain('Unknown command: /history');
+    expect(controller.state.inputError).toContain('Unknown command /history');
 
     await controller.submitCommand('/history rounds');
-    expect(controller.state.inputError).toContain('Unknown command: /history rounds');
+    expect(controller.state.inputError).toContain('Unknown command /history rounds');
 
     await controller.submitCommand('/experiments');
-    expect(controller.state.inputError).toContain('Unknown command: /experiments');
+    expect(controller.state.inputError).toContain('Unknown command /experiments');
 
     controller.clearInputError();
     expect(controller.state.inputError).toBeNull();
 
     await controller.submitCommand('/history');
-    expect(controller.state.inputError).toContain('Unknown command: /history');
+    expect(controller.state.inputError).toContain('Unknown command /history');
 
     expect(transport.requests).toEqual([]);
   });

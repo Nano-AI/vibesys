@@ -990,7 +990,9 @@ export class SocketSessionController implements SessionController {
     switch (action.kind) {
       case 'unknown':
         return this.#setState(
-          reportError(this.#state, `Unknown command: ${action.text}. Use /help.`, {scope: 'input'}),
+          reportError(this.#state, `Unknown command ${action.text}: try /help for the list.`, {
+            scope: 'input',
+          }),
         );
       case 'error':
         return this.#setState(reportError(this.#state, action.error, {scope: 'input'}));
