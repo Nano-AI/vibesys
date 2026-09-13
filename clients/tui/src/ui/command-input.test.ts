@@ -84,8 +84,8 @@ describe('command input hint row', () => {
       const restingColor = paneBorderColor(theme, false).toLowerCase();
       expect(rgbToHex(box().borderColor).toLowerCase()).toBe(restingColor);
 
-      render('Commands start with /. Use Experiment chat for questions.');
-      expect(text(hint())).toBe('✗ Commands start with /. Use Experiment chat for questions.');
+      render('Not a command: try /help, or ask in Experiment chat.');
+      expect(text(hint())).toBe('✗ Not a command: try /help, or ask in Experiment chat.');
       expect(rgbToHex(hint().fg).toLowerCase()).toBe(theme.error.toLowerCase());
       expect(rgbToHex(box().borderColor).toLowerCase()).toBe(theme.error.toLowerCase());
 

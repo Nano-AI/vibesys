@@ -1725,7 +1725,7 @@ describe('OpenTUI presentation', () => {
     // trains the operator to ignore the banner") applies just as well to a
     // wrong command as to an empty box.
     expect(commandHintText(testRenderer)).toBe(
-      '✗ Commands start with /. Use Experiment chat for questions.',
+      '✗ Not a command: try /help, or ask in Experiment chat.',
     );
     expect(testRenderer.renderer.root.findDescendantById('error-banner')?.visible).toBe(false);
     expect(controller.submissions).toEqual([]);
@@ -3817,7 +3817,7 @@ describe('theming', () => {
     // appears there verbatim.
     await testRenderer.waitForFrame(() => controller.state.inputError !== null);
     expect(commandHintText(testRenderer)).toBe(
-      '✗ Commands start with /. Use Experiment chat for questions.',
+      '✗ Not a command: try /help, or ask in Experiment chat.',
     );
     expect(controller.submissions).toEqual([]);
     expect(controller.chatSubmissions).toEqual([]);
@@ -6470,7 +6470,7 @@ class FakeController implements SessionController {
   submitCommand(value: string): Promise<void> {
     if (!value.trim().startsWith('/')) {
       this.publish(
-        reportError(this.state, 'Commands start with /. Use Experiment chat for questions.', {
+        reportError(this.state, 'Not a command: try /help, or ask in Experiment chat.', {
           scope: 'input',
         }),
       );

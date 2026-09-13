@@ -343,7 +343,7 @@ export function parseCommand(text: string, {surface}: SurfaceContext): ParsedCom
   if (match === null) {
     if (text === '') return {kind: 'error', error: 'Enter a slash command. Use /help.'};
     if (!text.startsWith('/')) {
-      return {kind: 'error', error: 'Commands start with /. Use Experiment chat for questions.'};
+      return {kind: 'error', error: 'Not a command: try /help, or ask in Experiment chat.'};
     }
     return {kind: 'unknown', text};
   }

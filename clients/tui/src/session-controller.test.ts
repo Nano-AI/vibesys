@@ -38,7 +38,7 @@ describe('session controller', () => {
     // the command input's own hint row rather than raising the shared banner
     // (#564/#635's reasoning, applied to a wrong command instead of an empty
     // one).
-    expect(controller.state.inputError).toContain('Commands start with /');
+    expect(controller.state.inputError).toContain('Not a command:');
     expect(controller.state.errorBanner).toBeNull();
 
     controller.clearInputError();
