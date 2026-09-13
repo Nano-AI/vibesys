@@ -7,6 +7,10 @@ import {
   SyntaxStyle,
 } from '@opentui/core';
 import type {ConversationEntry} from '../session-model.js';
+// Imported for its side effect: registers the vendored bash grammar before
+// anything can trigger `getTreeSitterClient()`'s first `initialize()`. See
+// its module doc comment for what is vendored and why.
+import './grammars.js';
 import type {ConversationRole, ConversationRoleColors, Theme} from './theme.js';
 
 export type EntryPalette = ConversationRoleColors;
@@ -137,14 +141,23 @@ function asCodeBlockOnly(renderNode: MarkdownRenderNode): MarkdownRenderNode {
 }
 
 /**
- * Filetypes `@opentui/core` ships a tree-sitter grammar for, mirroring
- * `node_modules/@opentui/core/assets/`. `infoStringToFiletype` (which the
- * renderer already applies before a block reaches `drawOnCodeSurface`, so
+ * Filetypes a grammar is available for, whether `@opentui/core` bundles it
+ * (mirroring `node_modules/@opentui/core/assets/`) or `grammars.ts` vendors
+ * it into `clients/tui/assets/`. `infoStringToFiletype` (which the renderer
+ * already applies before a block reaches `drawOnCodeSurface`, so
  * `block.filetype` is read here rather than re-parsed) happily resolves a
- * name for languages that have no grammar bundled, such as "rust" or "bash",
- * so the filetype alone does not say whether highlighting can run. Only
- * these five are bundled; vendoring more (issue #575 wants C++, Rust, Go,
- * Python) was measured and declined for now - see the module doc comment.
+ * name for languages that have no grammar at all, such as "rust", so the
+ * filetype alone does not say whether highlighting can run. Vendoring the
+ * rest of issue #575's languages (C++, Rust, Go, Python) was measured and
+ * declined for bundle size; bash is vendored anyway, on its own merits (see
+ * `grammars.ts`).
+ *
+ * "bash" covers both a ```bash fence and a ```sh one: `@opentui/core`'s own
+ * `extensionToFiletype` table resolves the "sh" info string to "bash" before
+ * a block is ever built, so "sh" never reaches this set as a literal
+ * `block.filetype`. "shell" has no such built-in mapping and does arrive
+ * here literally, so it needs its own entry even though the worker resolves
+ * it to the same grammar via `grammars.ts`'s alias.
  */
 const GRAMMAR_FILETYPES = new Set([
   'javascript',
@@ -154,6 +167,8 @@ const GRAMMAR_FILETYPES = new Set([
   'zig',
   'markdown',
   'markdown_inline',
+  'bash',
+  'shell',
 ]);
 
 const probedFiletypes = new Set<string>();
@@ -171,7 +186,7 @@ const probedFiletypes = new Set<string>();
  * Quiet by design: `console.debug` for "no parser", which is the expected
  * case for anything not in `GRAMMAR_FILETYPES` (rust, cpp, go, python
  * included - see the module doc comment), and `console.warn` for an actual
- * error, which means one of the five bundled grammars is broken. Neither
+ * error, which means one of the registered grammars is broken. Neither
  * renders anything; this is a developer signal, not a UI banner.
  *
  * ponytail: a grammar that loads fine but fails on one specific fence's
@@ -233,9 +248,10 @@ function* fencedBlocks(renderable: Renderable): Generator<CodeRenderable> {
  *
  * Inline code picks up `markup.raw` from the syntax style, but a fenced block
  * is rendered by `CodeRenderable`, which colors text from tree-sitter captures
- * for the block's own language. The package ships grammars for markdown,
- * JavaScript, TypeScript and Zig; the info string of a transcript fence
- * otherwise usually names a language it has no grammar for. Restyling the
+ * for the block's own language. `@opentui/core` ships grammars for markdown,
+ * JavaScript, TypeScript and Zig, and `grammars.ts` vendors one more for
+ * bash; the info string of a transcript fence otherwise usually names a
+ * language it has no grammar for. Restyling the
  * default block gives it a code surface either way. When a grammar is
  * available, per-token highlighting draws on top of that surface. When it is
  * not, the wait for highlighting would resolve to plain text anyway, so the

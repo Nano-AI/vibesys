@@ -38,6 +38,7 @@ include clients/core-state/tsconfig.json
 include clients/core-state/tsconfig.check.json
 include clients/core-state/README.md
 graft clients/tui/src
+graft clients/tui/assets
 include clients/tui/package.json
 include clients/tui/tsconfig.json
 include clients/tui/tsconfig.check.json

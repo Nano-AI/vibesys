@@ -19,6 +19,7 @@
     "vs": "./dist/launcher.js"
   },
   "files": [
+    "assets",
     "dist",
     "package.json",
     "README.md"

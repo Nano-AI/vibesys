@@ -247,6 +247,20 @@ describe('markdown code blocks', () => {
     expect(rgbToHex(code.bg)).toBe(theme.markdown.codeBackground);
   });
 
+  it('leaves a fenced block flat when nothing registers its filetype', async () => {
+    const theme = resolveTheme('dark');
+    // "lua" is deliberately not one of the bundled or vendored grammars
+    // (distinct from "ruby"/"elixir" below, which another test's probe-once
+    // dedupe already claims), so this pins the fallback the bash vendoring
+    // must not have narrowed.
+    const {markdown} = await renderMarkdown('```lua\nprint("hi")\n```\n', theme);
+
+    const code = fencedBlock(markdown, 'print("hi")');
+    expect(rgbToHex(code.fg)).toBe(theme.markdown.code);
+    expect(rgbToHex(code.bg)).toBe(theme.markdown.codeBackground);
+    expect(code.drawUnstyledText).toBe(true);
+  });
+
   it('styles a fenced block that declares no language', async () => {
     const theme = resolveTheme('light');
     const {markdown} = await renderMarkdown('```\nplain text\n```\n', theme);
@@ -298,6 +312,9 @@ describe('markdown code blocks', () => {
   it.each([
     ['ts', 'typescript'],
     ['tsx', 'typescriptreact'],
+    ['bash', 'bash'],
+    ['sh', 'bash'],
+    ['shell', 'shell'],
   ])('draws more than one colour for a %s fence whose grammar ships', async (info, filetype) => {
     const theme = resolveTheme('dark');
     const content = 'const x = 1;';
