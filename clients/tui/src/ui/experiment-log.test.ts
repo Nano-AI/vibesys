@@ -26,6 +26,7 @@ import {
   selectionCaret,
   sentenceCase,
   unownedRoundCells,
+  unownedRoundRow,
 } from './experiment-log.js';
 import {displayWidth} from './text-width.js';
 import {resolveTheme, THEME_NAMES} from './theme.js';
@@ -304,8 +305,6 @@ describe('experiment log rows', () => {
   it('keeps the ? marker readable when a long unit truncates at MEASURED_WIDTH', () => {
     const columns = resolveColumns(70);
     expect(columns.measured).toBe(true);
-    const header = headerRow(columns);
-    const measuredStart = header.indexOf('Measured');
     const row = entryRow(
       entry({
         perf_delta_pct: null,
@@ -316,7 +315,11 @@ describe('experiment log rows', () => {
       columns,
     );
 
-    expect(row.slice(measuredStart, measuredStart + 2)).toBe('? ');
+    // The marker is at the start of the value, which truncate() preserves by
+    // cutting the unit suffix, not the prefix; the value fills the column
+    // exactly here, so this substring check no longer depends on the
+    // header's own (now right-aligned) label position to locate it.
+    expect(row).toContain('? 55434.2');
   });
 
   it('keeps gutters across the separately colored outcome segments', () => {
@@ -485,6 +488,77 @@ describe('right-aligned numeric columns', () => {
     expect(columns.kept).toBe(true);
     expect(entryCells(entry({kept: true}), columns).trailing.endsWith('Yes')).toBe(true);
     expect(entryCells(entry({kept: false}), columns).trailing.endsWith('No')).toBe(true);
+  });
+});
+
+/**
+ * Every column's header label shares its alignment with that column's cells,
+ * placeholders included: a numeric column's header ends flush with its
+ * right-aligned values, a text column's header starts flush with its
+ * left-aligned values. Before this, every header label was left-aligned
+ * regardless of its column, so a right-aligned value (or a right-aligned
+ * placeholder) sat under a header that started, not ended, at the column
+ * boundary.
+ */
+describe('header alignment follows its column', () => {
+  it('right-aligns the Rounds header so it ends where its right-aligned values end', () => {
+    const columns = resolveColumns(WIDE);
+    const header = headerRow(columns);
+    const row = entryRow(entry({first_round: 10, last_round: 99}), columns);
+
+    const headerEnd = header.indexOf('Rounds') + 'Rounds'.length;
+    const valueEnd = row.indexOf('10-99') + '10-99'.length;
+    expect(headerEnd).toBe(valueEnd);
+  });
+
+  it('right-aligns the Measured header so it ends where its right-aligned values end', () => {
+    const columns = resolveColumns(WIDE);
+    const header = headerRow(columns);
+    const value = formatMeasured(entry());
+    const row = entryRow(entry(), columns);
+
+    const headerEnd = header.indexOf('Measured') + 'Measured'.length;
+    const valueEnd = row.indexOf(value) + value.length;
+    expect(headerEnd).toBe(valueEnd);
+  });
+
+  it('right-aligns the Kept header so it ends where its right-aligned values end', () => {
+    const columns = resolveColumns(WIDE);
+    expect(columns.kept).toBe(true);
+    const header = headerRow(columns);
+    const row = entryRow(entry({kept: true}), columns);
+
+    const headerEnd = header.indexOf('Kept') + 'Kept'.length;
+    const valueEnd = row.indexOf('Yes') + 'Yes'.length;
+    expect(headerEnd).toBe(valueEnd);
+  });
+
+  it('left-aligns the Implementation Details header so it starts where its values start', () => {
+    const columns = resolveColumns(WIDE);
+    const header = headerRow(columns);
+    const row = entryRow(entry({title: 'Batch decode requests'}), columns);
+
+    const headerStart = header.indexOf('Implementation Details');
+    const valueStart = row.indexOf('Batch decode requests');
+    expect(headerStart).toBe(valueStart);
+  });
+
+  it('in the unowned-round row, right-aligns the Measured placeholder under the Measured header and left-aligns the Outcome placeholder under the Outcome header', () => {
+    const columns = resolveColumns(WIDE);
+    const header = headerRow(columns);
+    const row = unownedRoundRow(3, columns);
+
+    const measuredHeaderEnd = header.indexOf('Measured') + 'Measured'.length;
+    const measuredPlaceholder = row.indexOf('—');
+    // Right-aligned: the one-glyph placeholder ends flush with the header
+    // label's own right-aligned end.
+    expect(measuredPlaceholder + 1).toBe(measuredHeaderEnd);
+
+    const outcomeHeaderStart = header.indexOf('Outcome');
+    const outcomePlaceholder = row.indexOf('—', measuredPlaceholder + 1);
+    // Left-aligned: the placeholder starts exactly where the header's own
+    // left-aligned label starts.
+    expect(outcomePlaceholder).toBe(outcomeHeaderStart);
   });
 });
 

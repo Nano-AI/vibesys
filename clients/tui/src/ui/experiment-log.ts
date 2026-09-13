@@ -622,6 +622,23 @@ const COLUMN_GAP = '  ';
 /** The one glyph the file uses for a value that is genuinely absent. */
 const PLACEHOLDER = '—';
 
+type Align = 'left' | 'right';
+
+/**
+ * One alignment per column, read by both `headerRow` and the cell renderers
+ * (`entryCells`, `unownedRoundCells`) so a header label and its column's
+ * values, placeholders included, share one source of truth and cannot drift
+ * apart again. Numeric columns (Rounds, Measured, Kept) read right to left;
+ * text columns (Hypothesis, Implementation Details, Outcome) read left to
+ * right.
+ */
+const ID_ALIGN: Align = 'left';
+const ROUNDS_ALIGN: Align = 'right';
+const CLAIM_ALIGN: Align = 'left';
+const MEASURED_ALIGN: Align = 'right';
+const OUTCOME_ALIGN: Align = 'left';
+const KEPT_ALIGN: Align = 'right';
+
 export function resolveColumns(width: number): Columns {
   const claim = width >= CLAIM_MIN_WIDTH;
   const measured = width >= MEASURED_MIN_WIDTH;
@@ -645,17 +662,22 @@ export function resolveColumns(width: number): Columns {
 }
 
 export function headerRow(columns: Columns, direction: 'max' | 'min' | null = null): string {
-  const parts = [padToWidth(' Hypothesis', ID_WIDTH), padToWidth('Rounds', ROUNDS_WIDTH)];
-  if (columns.claim) parts.push(padToWidth('Implementation Details', columns.claimWidth));
+  const parts = [
+    fitColumn(' Hypothesis', ID_WIDTH, ID_ALIGN),
+    fitColumn('Rounds', ROUNDS_WIDTH, ROUNDS_ALIGN),
+  ];
+  if (columns.claim) {
+    parts.push(fitColumn('Implementation Details', columns.claimWidth, CLAIM_ALIGN));
+  }
   if (columns.measured) {
     // The glyph is the way improvement points, so a signed delta below reads
     // as good or bad without task knowledge. A glyph rather than color, which
     // the outcome column already spends; the drill-down spells out the word.
     const label = direction === null ? 'Measured' : `Measured ${direction === 'max' ? '↑' : '↓'}`;
-    parts.push(padToWidth(label, MEASURED_WIDTH));
+    parts.push(fitColumn(label, MEASURED_WIDTH, MEASURED_ALIGN));
   }
-  parts.push(padToWidth('Outcome', OUTCOME_WIDTH));
-  if (columns.kept) parts.push(padToWidth('Kept', KEPT_WIDTH));
+  parts.push(fitColumn('Outcome', OUTCOME_WIDTH, OUTCOME_ALIGN));
+  if (columns.kept) parts.push(fitColumn('Kept', KEPT_WIDTH, KEPT_ALIGN));
   return parts.join(COLUMN_GAP);
 }
 
@@ -702,29 +724,33 @@ export function entryCells(
     fitColumn(
       `${marker}${truncate(entry.hypothesis_id, ID_WIDTH - displayWidth(marker))}`,
       ID_WIDTH,
+      ID_ALIGN,
     ),
-    fitColumn(formatRounds(entry), ROUNDS_WIDTH, 'right'),
+    fitColumn(formatRounds(entry), ROUNDS_WIDTH, ROUNDS_ALIGN),
   ];
   if (columns.claim) {
     leading.push(
       fitColumn(
         sentenceCase(entry.title ?? entry.claim ?? entry.action ?? PLACEHOLDER),
         columns.claimWidth,
+        CLAIM_ALIGN,
       ),
     );
   }
-  if (columns.measured) leading.push(fitColumn(formatMeasured(entry), MEASURED_WIDTH, 'right'));
+  if (columns.measured) {
+    leading.push(fitColumn(formatMeasured(entry), MEASURED_WIDTH, MEASURED_ALIGN));
+  }
   return {
     leading: leading.join(COLUMN_GAP),
     // These are separate renderables so outcome can carry semantic color.
     // Put gutters on the following segment rather than relying on trailing
     // padding surviving across renderable boundaries.
-    outcome: `${COLUMN_GAP}${fitColumn(outcomeLabel(entry), OUTCOME_WIDTH)}`,
+    outcome: `${COLUMN_GAP}${fitColumn(outcomeLabel(entry), OUTCOME_WIDTH, OUTCOME_ALIGN)}`,
     trailing: columns.kept
       ? `${COLUMN_GAP}${fitColumn(
           entry.kept === true ? 'Yes' : entry.kept === false ? 'No' : PLACEHOLDER,
           KEPT_WIDTH,
-          'right',
+          KEPT_ALIGN,
         )}`
       : '',
   };
@@ -753,15 +779,16 @@ export function unownedRoundCells(
     fitColumn(
       `${marker}${truncate(NO_HYPOTHESIS_LABEL, ID_WIDTH - displayWidth(marker))}`,
       ID_WIDTH,
+      ID_ALIGN,
     ),
-    fitColumn(String(roundNumber), ROUNDS_WIDTH, 'right'),
+    fitColumn(String(roundNumber), ROUNDS_WIDTH, ROUNDS_ALIGN),
   ];
-  if (columns.claim) leading.push(fitColumn(RECORDED_TURNS_LABEL, columns.claimWidth));
-  if (columns.measured) leading.push(fitColumn(PLACEHOLDER, MEASURED_WIDTH, 'right'));
+  if (columns.claim) leading.push(fitColumn(RECORDED_TURNS_LABEL, columns.claimWidth, CLAIM_ALIGN));
+  if (columns.measured) leading.push(fitColumn(PLACEHOLDER, MEASURED_WIDTH, MEASURED_ALIGN));
   return {
     leading: leading.join(COLUMN_GAP),
-    outcome: `${COLUMN_GAP}${fitColumn(PLACEHOLDER, OUTCOME_WIDTH)}`,
-    trailing: columns.kept ? `${COLUMN_GAP}${fitColumn(PLACEHOLDER, KEPT_WIDTH, 'right')}` : '',
+    outcome: `${COLUMN_GAP}${fitColumn(PLACEHOLDER, OUTCOME_WIDTH, OUTCOME_ALIGN)}`,
+    trailing: columns.kept ? `${COLUMN_GAP}${fitColumn(PLACEHOLDER, KEPT_WIDTH, KEPT_ALIGN)}` : '',
   };
 }
 
@@ -781,7 +808,7 @@ const RECORDED_TURNS_LABEL = 'recorded agent turns';
  * the many existing left-aligned calls are unchanged. Both directions measure
  * in cells via `displayWidth`, not code units, so CJK content still lines up.
  */
-function fitColumn(value: string, width: number, align: 'left' | 'right' = 'left'): string {
+function fitColumn(value: string, width: number, align: Align = 'left'): string {
   const fitted = truncate(value, width);
   if (align === 'left') return padToWidth(fitted, width);
   return ' '.repeat(Math.max(0, width - displayWidth(fitted))) + fitted;
