@@ -678,7 +678,7 @@ describe('transcript run ids take the card label color, source tags recede (#647
   });
 });
 
-describe('a split gate command entry (the legacy framework-validation adapter)', () => {
+describe('a gate command entry', () => {
   // Shape of clients/tui/dev/fixtures/bad-cpp-round1.jsonl:388, already split
   // by core-state's `splitFrameworkValidationCommand` into prose plus
   // `command`.
@@ -748,5 +748,36 @@ describe('a split gate command entry (the legacy framework-validation adapter)',
     const text = card.getChildren().find(child => child instanceof TextRenderable);
     if (!(text instanceof TextRenderable)) throw new Error('content text missing');
     expect(text.wrapMode).toBe('word');
+  });
+
+  it('draws a typed gate_started entry the same way: prose plus a bash code block, not duplicated', async () => {
+    // Shape core-state's eventToTranscriptEntry now produces directly from a
+    // typed gate_started event's `command` field: prose carries no command.
+    const entries: ConversationEntry[] = [
+      {
+        id: 'g4',
+        kind: 'status',
+        label: 'framework-validation · round-1',
+        content: 'running focused-tests',
+        command: GATE_COMMAND,
+      },
+    ];
+    const {view} = await renderEntries(entries);
+    const card = cardOf(view, 'g4');
+    const code = card.getChildren().find(child => child instanceof CodeRenderable);
+    if (!(code instanceof CodeRenderable)) throw new Error('command code block missing');
+    expect(code.content).toBe(GATE_COMMAND);
+    expect(code.filetype).toBe('bash');
+    expect(code.wrapMode).toBe('char');
+    const text = card.getChildren().find(child => child instanceof TextRenderable);
+    if (!(text instanceof TextRenderable)) throw new Error('prose text missing');
+    const prose =
+      typeof text.content === 'string'
+        ? text.content
+        : text.content.chunks.map(chunk => chunk.text).join('');
+    expect(prose).toBe('running focused-tests');
+    expect(prose).not.toContain(GATE_COMMAND);
+    // Exactly one command block: the command never renders twice.
+    expect(card.getChildren().filter(child => child instanceof CodeRenderable)).toHaveLength(1);
   });
 });

@@ -190,8 +190,8 @@ function warnIfHighlightSignalsTrouble(block: CodeRenderable): void {
 
 /**
  * Puts one block on the code surface, whether the renderer built it from a
- * markdown fence or it was constructed standalone (a legacy diagnostic line's
- * shell command, in `conversation.ts`'s generic entry branch). Either way a
+ * markdown fence or it was constructed standalone (an entry's gate command,
+ * in `conversation.ts`'s generic entry branch). Either way a
  * `CodeRenderable` without a bundled grammar (`GRAMMAR_FILETYPES`) has no
  * `filetype`, so this always takes the flat `drawUnstyledText` path for it:
  * the code background and a flat code foreground, no per-token colour.

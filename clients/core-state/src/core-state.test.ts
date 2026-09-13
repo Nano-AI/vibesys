@@ -1024,7 +1024,7 @@ describe('the carried-forward profile flag', () => {
 });
 
 describe('typed framework events', () => {
-  it('renders a gate start as the gate running its command', () => {
+  it('renders a gate start as the gate running, with its command in a separate field', () => {
     const state = reduceEvent(
       initialCoreState(),
       frameworkEvent(
@@ -1043,12 +1043,30 @@ describe('typed framework events', () => {
     expect(state.transcript).toMatchObject([
       {
         kind: 'status',
-        content: 'running focused-tests: uv run pytest -q',
+        content: 'running focused-tests',
+        command: 'uv run pytest -q',
         label: 'framework-validation · round-1',
         roundLabel: 'round-1',
         roundNumber: 1,
       },
     ]);
+    // The command lives only in the `command` field: prose must not repeat it.
+    expect(state.transcript[0]?.content).not.toContain('uv run pytest -q');
+  });
+
+  it('leaves `command` unset on a gate start with no command', () => {
+    const state = reduceEvent(
+      initialCoreState(),
+      frameworkEvent(
+        1,
+        'gate_started',
+        {kind: 'gate_started', gate: 'accuracy'},
+        {status: 'active'},
+      ),
+    );
+
+    expect(state.transcript[0]?.content).toBe('running');
+    expect(state.transcript[0]?.command).toBeUndefined();
   });
 
   // The framework speaks for itself even while an agent phase is active, and

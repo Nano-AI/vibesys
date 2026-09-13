@@ -105,7 +105,11 @@ export interface TranscriptEntry {
   invocationId?: string;
   startsTurn?: boolean;
   toolCall?: string;
-  /** A shell command split out of a legacy bracket-tagged diagnostic line; see `splitFrameworkValidationCommand`. */
+  /**
+   * A shell command to give code treatment instead of word-wrapped prose.
+   * Populated straight from a typed `gate_started` event's `command` field,
+   * or, for recorded/legacy prose, split out by `splitFrameworkValidationCommand`.
+   */
   command?: string;
   toolResponse?: string;
   toolName?: string;
@@ -1294,13 +1298,13 @@ function eventToTranscriptEntry(event: RunEvent): TranscriptEntry | null {
   // so the transcript attributes them to their subsystem, not to an agent.
   if (data?.kind === 'gate_started') {
     const recipe = data.recipe == null ? '' : ` ${data.recipe}`;
-    const command = data.command == null ? '' : `: ${data.command}`;
     return {
       id,
       kind: 'status',
-      content: `running${recipe}${command}`,
+      content: `running${recipe}`,
       label: frameworkLabel(`framework-${data.gate}`, event),
       ...roundFields,
+      ...(data.command == null ? {} : {command: data.command}),
     };
   }
   if (data?.kind === 'gate_finished') return gateFinishedEntry(event, data, id, roundFields);
@@ -1374,19 +1378,21 @@ function configurationFailureContent(data: {
 }
 
 /**
- * Legacy adapter: on `main` today there is no structured command on the wire.
- * loop.py's `ctx.lprint(f"[framework-validation] running {recipe.name}:
- * {recipe.command}")` puts the gate command in free text on the diagnostic
- * channel, and this is the one place that text is folded into an entry, so
- * split it here rather than let the TUI word-wrap a shell command as prose.
+ * Legacy/recorded-prose adapter: a live backend on `main` now emits a typed
+ * `gate_started` event whose `command` field `eventToTranscriptEntry` reads
+ * directly (see above), but a run recorded before #697 (e.g. the dev harness
+ * fixture `clients/tui/dev/fixtures/bad-cpp-round1.jsonl`, replayed byte for
+ * byte as `agent_output_chunk`/diagnostic) still carries the gate command as
+ * free text: loop.py's old `ctx.lprint(f"[framework-validation] running
+ * {recipe.name}: {recipe.command}")`. This is the one place that text is
+ * folded into an entry, so it is split here rather than let the TUI
+ * word-wrap a shell command as prose.
  *
  * Deliberately narrow: only the exact "[framework-validation] running
  * <recipe>: " prefix qualifies, so ordinary diagnostic prose (a colon, the
  * word "running", a bracket tag with a different shape, such as the sibling
  * `[framework-validation] PASS` / `reused PASS: ...` lines) is never mistaken
- * for a command. Once #692 / PR #697 land, `gate_started.command` is a typed
- * field on the event and this function is deleted in favor of reading
- * `data.command` directly.
+ * for a command.
  */
 const FRAMEWORK_VALIDATION_RUN = /^\[framework-validation\] running [^:\n]+: ([\s\S]*)$/;
 

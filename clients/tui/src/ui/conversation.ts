@@ -525,11 +525,12 @@ export class ConversationView {
         }),
       );
       if (entry.command !== undefined) {
-        // The legacy framework-validation adapter split a shell command out
-        // of the prose above; give it code treatment instead of word-wrapping
-        // it like a sentence. `char` wrap is the point: a command's spaces
-        // are argument separators, not soft-wrap points, so it must break
-        // anywhere rather than at one.
+        // A gate's command (from the typed `gate_started` event, or, for
+        // recorded/legacy prose, core-state's `splitFrameworkValidationCommand`)
+        // gets code treatment instead of word-wrapping it like a sentence.
+        // `char` wrap is the point: a command's spaces are argument
+        // separators, not soft-wrap points, so it must break anywhere rather
+        // than at one.
         const commandBlock = new CodeRenderable(this.renderer, {
           content: entry.command,
           // No bash grammar ships today (GRAMMAR_FILETYPES in styles.ts), so
