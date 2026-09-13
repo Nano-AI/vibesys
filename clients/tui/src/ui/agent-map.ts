@@ -641,19 +641,13 @@ function cellKey(x: number, y: number): string {
 
 /**
  * Edge runs that carry data into an active node from a completed source in
- * the column before it: the only edges the approved design animates. Once
- * `edgeTone()` (agent-graph.ts) stopped tagging an active node's own outbound
- * edges 'live' (#728), a straight single-row edge's tone already says exactly
- * this. Tone still is not an equivalent test for a bent edge, though:
- * `routeEdges` paints every lane segment of a bend with the same tone, so
- * selecting on tone would also catch those mid-path fragments — which have no
- * arrowhead cell of their own and which this function deliberately excludes
- * below. Node status, read straight off `graph.nodes`, is the test that
- * agrees with that "single straight run" restriction in both directions.
+ * the column before it: the only edges the band animates. Selected by node
+ * status, not by `'live'` tone: `routeEdges` gives every lane segment of a
+ * bent edge the same tone, and those segments have no arrowhead of their own.
  *
  * A run qualifies when its first cell is some node's departure point (`x +
  * width, y + 1`) and its last cell is an active node's arrival point (`x - 1,
- * y + 1`) — the two fixed offsets `routeEdges` (agent-graph.ts) always starts
+ * y + 1`), the two fixed offsets `routeEdges` (agent-graph.ts) always starts
  * and ends an edge at, whatever bend it took in between.
  *
  * Only a straight, single-row hop is found this way: a bent edge (a column
@@ -681,8 +675,8 @@ export function flowRuns(nodes: GraphNode[], runs: readonly EdgeRun[]): Set<Edge
 /**
  * A flow run's glyphs, unchanged, with a 2-cell brightness band riding the
  * line: the cell at `tick`'s position is `brightestColor`, the cell behind it
- * (toward the source) is `brighterColor`, and every other line cell —
- * including the ones the band has already passed — is `liveColor`, the
+ * (toward the source) is `brighterColor`, and every other line cell,
+ * including the ones the band has already passed, is `liveColor`, the
  * edge's ordinary live-tone colour. The band moves one cell per call; the
  * tail does not wrap, so the cell behind the head is only ever the one cell
  * immediately before it, never the run's far end. The head itself wraps, from
@@ -697,7 +691,7 @@ export function flowRuns(nodes: GraphNode[], runs: readonly EdgeRun[]): Set<Edge
  * lockstep (one shared `tick`) and would read as a single band rather than
  * distinct flows; `routeEdges` also merges cells where edges overlap near a
  * shared target, so two bands could land on the same cells and fuse into one.
- * Neither shows today because execution is sequential — at most one edge feeds
+ * Neither shows today because execution is sequential: at most one edge feeds
  * an active node at a time.
  */
 export function paintEdgeFlow(
