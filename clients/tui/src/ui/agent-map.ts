@@ -1,4 +1,11 @@
-import {BoxRenderable, type CliRenderer, TextRenderable} from '@opentui/core';
+import {
+  BoxRenderable,
+  type CliRenderer,
+  fg,
+  StyledText,
+  type TextChunk,
+  TextRenderable,
+} from '@opentui/core';
 import {
   type AgentPhase,
   hasActiveAgentTiming,
@@ -18,6 +25,7 @@ import {SPINNER_FRAMES, SPINNER_INTERVAL_MS} from './activity-bar.js';
 import {
   type AgentGraph,
   type EdgeTone,
+  type GraphNode,
   graphPaneBounds,
   graphWindow,
   layoutAgentGraph,
@@ -141,6 +149,10 @@ export class AgentMapView {
     text: TextRenderable;
     inner: number | null;
   }> = [];
+  /** How far the travelling dot has advanced; ticks alongside the spinner frame. */
+  #flowTick = 0;
+  /** Every inbound-edge run animating a dot, refreshed in place on the same tick. */
+  #flowEdges: Array<{text: TextRenderable; glyphs: string}> = [];
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -341,16 +353,21 @@ export class AgentMapView {
     });
     this.#content.add(area);
     area.add(canvas);
-    for (const run of edgeRuns(graph)) {
-      canvas.add(
-        new TextRenderable(this.renderer, {
-          content: run.glyphs,
-          fg: edgeColor(this.#theme, run.tone),
-          position: 'absolute',
-          left: run.x,
-          top: run.y,
-        }),
-      );
+    const runs = edgeRuns(graph);
+    const flowing = flowRuns(graph.nodes, runs);
+    for (const run of runs) {
+      const isFlow = flowing.has(run);
+      const text = new TextRenderable(this.renderer, {
+        content: isFlow
+          ? paintEdgeFlow(run.glyphs, this.#flowTick, this.#theme.borderStrong, this.#theme.accent)
+          : run.glyphs,
+        ...(isFlow ? {} : {fg: edgeColor(this.#theme, run.tone)}),
+        position: 'absolute',
+        left: run.x,
+        top: run.y,
+      });
+      canvas.add(text);
+      if (isFlow) this.#flowEdges.push({text, glyphs: run.glyphs});
     }
     for (const node of graph.nodes) {
       canvas.add(this.#renderNode(node.phase, node.phase.kind === selectedKind, node));
@@ -531,6 +548,17 @@ export class AgentMapView {
         const label = nodeLabel(node.phase, node.selected, this.#spinnerFrame);
         node.text.content = node.inner === null ? label : truncate(label, node.inner);
       }
+      // Same tick as the node spinner above, per the design: one interval
+      // drives both, never a second timer.
+      this.#flowTick += 1;
+      for (const edge of this.#flowEdges) {
+        edge.text.content = paintEdgeFlow(
+          edge.glyphs,
+          this.#flowTick,
+          this.#theme.borderStrong,
+          this.#theme.accent,
+        );
+      }
     }, SPINNER_INTERVAL_MS);
   }
 
@@ -544,6 +572,7 @@ export class AgentMapView {
     this.#runningRound = null;
     this.#stopElapsedTimer();
     this.#spinnerNodes = [];
+    this.#flowEdges = [];
     this.#stopSpinnerTimer();
     for (const child of [...this.#content.getChildren()]) {
       this.#content.remove(child);
@@ -575,6 +604,82 @@ export function edgeRuns(
     runs.push({x: cell.x, y: cell.y, glyphs: cell.glyph, tone: cell.tone});
   }
   return runs;
+}
+
+type EdgeRun = ReturnType<typeof edgeRuns>[number];
+
+function cellKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
+
+/**
+ * Edge runs that carry data into an active node from a completed source in
+ * the column before it: the only edges the approved design animates. An
+ * active node's own outbound edges are excluded even though `edgeTone()`
+ * (agent-graph.ts) also tags them 'live' on this base — that direction bug is
+ * fixed separately (#714, not in this branch) — so tone alone cannot decide
+ * this; node status, read straight off `graph.nodes`, does.
+ *
+ * A run qualifies when its first cell is some node's departure point (`x +
+ * width, y + 1`) and its last cell is an active node's arrival point (`x - 1,
+ * y + 1`) — the two fixed offsets `routeEdges` (agent-graph.ts) always starts
+ * and ends an edge at, whatever bend it took in between.
+ *
+ * Only a straight, single-row hop is found this way: a bent edge (a column
+ * stacking more than one agent) routes through separate lane runs per row, so
+ * its cells never sit in one run and this returns nothing for it. ponytail:
+ * acceptable today because a live inbound edge onto a stacked column is rare;
+ * extend to multi-run paths if that combination becomes common.
+ */
+export function flowRuns(nodes: GraphNode[], runs: readonly EdgeRun[]): Set<EdgeRun> {
+  const departures = new Map<string, AgentPhase>();
+  const arrivals = new Set<string>();
+  for (const node of nodes) {
+    departures.set(cellKey(node.x + node.width, node.y + 1), node.phase);
+    if (node.phase.status === 'active') arrivals.add(cellKey(node.x - 1, node.y + 1));
+  }
+  const flows = new Set<EdgeRun>();
+  for (const run of runs) {
+    const source = departures.get(cellKey(run.x, run.y));
+    if (source?.status !== 'completed') continue;
+    if (arrivals.has(cellKey(run.x + run.glyphs.length - 1, run.y))) flows.add(run);
+  }
+  return flows;
+}
+
+/**
+ * A flow run's glyphs redrawn dimmed (`dimColor`), with one bright `•`
+ * (`dotColor`) riding the line and advancing a cell every call. No brightness
+ * gradient: a spike tried a fading comet and found that on a short edge the
+ * comet is as long as the edge, so the whole line flips colour at once, which
+ * reads as a blink. A single dot is a shape channel instead of a colour one,
+ * so it survives a palette collapse (WCAG 1.4.1).
+ *
+ * `tick` cycles over every cell except the run's last one: `routeEdges`
+ * always writes the arrowhead there, and it stays fixed and is never the dot,
+ * so direction always reads from its own glyph rather than from wherever the
+ * dot happens to be.
+ *
+ * Known limits, not fixed here: several inbound edges into one node tick in
+ * lockstep (one shared `tick`) and would read as a single pulse rather than
+ * distinct flows; `routeEdges` also merges cells where edges overlap near a
+ * shared target, so two dots could land on the same cell and fuse into one.
+ * Neither shows today because execution is sequential — at most one edge feeds
+ * an active node at a time.
+ */
+export function paintEdgeFlow(
+  glyphs: string,
+  tick: number,
+  dimColor: string,
+  dotColor: string,
+): StyledText {
+  const chars = [...glyphs];
+  const pathLength = chars.length - 1;
+  const dotIndex = pathLength > 0 ? tick % pathLength : -1;
+  const chunks: TextChunk[] = chars.map((glyph, index) =>
+    index === dotIndex ? fg(dotColor)('•') : fg(dimColor)(glyph),
+  );
+  return new StyledText(chunks);
 }
 
 /** `4 agents · 1 active · 2 done`, with failures and skips only when they exist. */
